@@ -26,6 +26,15 @@
     "muted": "#7a5364",
     "border": "#f3c7d8"
   },
+  "kmb-shopee": {
+    "accent": "#ee4d2d",
+    "accent_soft": "#fdeae5",
+    "surface": "#ffffff",
+    "page": "#fff8f6",
+    "text": "#24151d",
+    "muted": "#7a5364",
+    "border": "#fbd7cd"
+  },
   "dgmr": {
     "accent": "#2f5d50",
     "accent_soft": "#e4f2ed",
@@ -34,5 +43,14 @@
     "text": "#17251f",
     "muted": "#527067",
     "border": "#c9ddd5"
+  },
+  "dgmr-shopee": {
+    "accent": "#ee4d2d",
+    "accent_soft": "#fdeae5",
+    "surface": "#ffffff",
+    "page": "#fff8f6",
+    "text": "#17251f",
+    "muted": "#527067",
+    "border": "#fbd7cd"
   }
 }

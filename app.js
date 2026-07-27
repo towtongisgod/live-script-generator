@@ -366,16 +366,17 @@ function parsePromotion(text, index, knowledge, brand = null, style = null){
   const mainProductText = cleanupPhrase(prePriceText) || cleaned;
   const quantityTiers = extractQuantityTiers(cleaned);
   const regular = moneyAfter(cleaned, [
-    /ราคาปกติ[^\d]{0,10}([\d,]+(?:\.\d+)?)/i,
-    /จากปกติ[^\d]{0,10}([\d,]+(?:\.\d+)?)/i,
+    /ราคาปกติ[^\d\n]{0,10}([\d,]+(?:\.\d+)?)/i,
+    /จากปกติ[^\d\n]{0,10}([\d,]+(?:\.\d+)?)/i,
     /Full\s*Price\s*:?\s*([\d,]+(?:\.\d+)?)/i
   ]) || quantityTiers[0]?.regularPrice || null;
   const promoPrice = moneyAfter(cleaned, [
-    /ราคาพิเศษ[^\d]{0,10}([\d,]+(?:\.\d+)?)/i,
-    /ราคาโปร[^\d]{0,10}([\d,]+(?:\.\d+)?)/i,
-    /ในราคา[^\d]{0,15}([\d,]+(?:\.\d+)?)/i,
+    /ราคาพิเศษ[^\d\n]{0,10}([\d,]+(?:\.\d+)?)/i,
+    /ราคาโปร[^\d\n]{0,10}([\d,]+(?:\.\d+)?)/i,
+    /ในราคา[^\d\n]{0,15}([\d,]+(?:\.\d+)?)/i,
     /พิเศษ\s*([\d,]+(?:\.\d+)?)(?!\s*(?:ml|มล\.?|กรัม|g|oz|ขวด|ชิ้น|kg|ก\.?|ลิตร))/i,
-    /Price\s*:?\s*([\d,]+(?:\.\d+)?)/i
+    /Price\s*:?\s*([\d,]+(?:\.\d+)?)/i,
+    /เพียง\s*([\d,]+(?:\.\d+)?)/i
   ]) || quantityTiers[0]?.promoPrice || null;
   const coupon = extractCoupon(cleaned);
   const explicitFinalPrice = extractFinalPrice(cleaned);
@@ -875,7 +876,7 @@ function formatOccasion(variant){
 function formatItemsInSet(p){
   if (p.brandId === 'dgmr') {
     const mainText = String(p.raw || '')
-      .split(/รับฟรี|ของแถม|แถม|ราคาปกติ|ราคาพิเศษ|ราคาโปร/i)[0]
+      .split(/รับฟรี|ของแถม|แถม|ราคาปกติ|จากปกติ|ราคาพิเศษ|ราคาโปร|ในราคา|>>|https?:\/\/|\n\s*\n/i)[0]
       .split('\n')
       .map(line => cleanupPhrase(line.replace(/^\+\s*/, '')))
       .filter(Boolean)

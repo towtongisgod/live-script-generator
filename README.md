@@ -4,12 +4,13 @@ Auto Script Generator สำหรับ TikTok Live Commerce — วางโ�
 
 ## แท็บที่มี
 
-- **SKINOXY** — วางโปรโมชั่นแบบเลขลำดับ (`1. ... 2. ...`) หนาแน่นบรรทัดเดียว
-- **SKINOXY Shopee** — วางแคปชั่นสไตล์ Shopee ได้ตรงๆ (มีอีโมจิ, ลิงก์ `>> 🛒`, ราคาแบบ "จากปกติ X (เพียง Y)", ราคาหลายระดับแบบ "ซื้อ 1 กล่อง.../ซื้อ 2 กล่อง...")
-- **KISS MY BODY (KMB)** — น้ำหอม/Lifestyle
-- **DGMR** — แฮร์แคร์ (Daeng Gi Meo Ri)
+ทุกแบรนด์มี 2 แท็บ — **TikTok** (วางโปรแบบเลขลำดับ `1. ... 2. ...` หนาแน่นบรรทัดเดียว) กับ **Shopee** (วางแคปชั่นสไตล์ Shopee ตรงๆ ได้เลย มีอีโมจิ, ลิงก์ `>> 🛒`, ราคาแบบ "จากปกติ X (เพียง Y)", ราคาหลายระดับแบบ "ซื้อ 1 กล่อง.../ซื้อ 2 กล่อง..."):
 
-ทุกแท็บใช้ parser และ script generator ชุดเดียวกันใน `app.js` ต่างกันแค่ knowledge file (`data/*-products.json`) และ sample/placeholder
+- **SKINOXY TikTok** / **SKINOXY Shopee**
+- **KMB TikTok** / **KMB Shopee** — น้ำหอม/Lifestyle (KISS MY BODY)
+- **DGMR TikTok** / **DGMR Shopee** — แฮร์แคร์ (Daeng Gi Meo Ri)
+
+ทุกแท็บใช้ parser และ script generator ชุดเดียวกันใน `app.js` ต่างกันแค่ knowledge file (`data/*-products.json`) และ sample/placeholder — แท็บ TikTok กับ Shopee ของแบรนด์เดียวกันใช้ knowledge file เดียวกัน (เช่น `skinoxy-shopee` ใช้ `skinoxy-products.json` เหมือน `skinoxy`) ต่างกันแค่รูปแบบข้อความตัวอย่างที่วางเข้าไป
 
 ## ความสามารถหลัก
 
@@ -67,7 +68,9 @@ skinoxy-auto-script-mvp/
 ├─ sample-promotions.txt
 ├─ sample-skinoxy-shopee-promotions.txt
 ├─ sample-kmb-promotions.txt
-└─ sample-dgmr-promotions.txt
+├─ sample-kmb-shopee-promotions.txt
+├─ sample-dgmr-promotions.txt
+└─ sample-dgmr-shopee-promotions.txt
 ```
 
 ## ข้อจำกัดที่รู้อยู่แล้ว

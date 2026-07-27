@@ -3,7 +3,7 @@
   "brands": [
     {
       "id": "skinoxy",
-      "label": "SKINOXY",
+      "label": "SKINOXY TikTok",
       "title": "SKINOXY Auto Script Generator",
       "description": "วางโปรโมชั่นหลายรายการเป็นก้อนเดียว ระบบจะแยกโปรและสร้างสคริปต์ TikTok Live 3 Session ต่อโปรโมชั่น โดยแต่ละ Session อ่านขายได้ประมาณ 2-3 นาที",
       "knowledge_file": "skinoxy-products.json",
@@ -21,7 +21,7 @@
     },
     {
       "id": "kmb",
-      "label": "KISS MY BODY",
+      "label": "KMB TikTok",
       "title": "KMB Auto Script",
       "description": "สร้างสคริปต์ TikTok Live สำหรับ KISS MY BODY จากโปรโมชั่นหลายรายการในข้อความเดียว พร้อม 3 Session ที่อ่านขายได้ประมาณ 2-3 นาทีต่อ Session",
       "knowledge_file": "kmb-products.json",
@@ -29,13 +29,31 @@
       "placeholder": "1. เซตคู่ความมั่นใจหอมตลอดวัน\nEDT Revamp กลิ่น Sweet Poison\n+ Underarm Dry Serum สูตร Blink Bright สีชมพู\nราคาปกติ 478 บาท\nราคาพิเศษ 329 บาท\n\n2. Body Set 3 ชิ้น\nShower + Lotion + EDT กลิ่น Sweet Poison\nราคาปกติ 997 บาท\nราคาพิเศษ 649 บาท"
     },
     {
+      "id": "kmb-shopee",
+      "label": "KMB Shopee",
+      "title": "KMB Shopee Auto Script Generator",
+      "description": "วางแคปชั่นโปรโมชั่นสไตล์ Shopee ของ KISS MY BODY (มีอีโมจิ ลิงก์ >> หรือราคาหลายระดับแบบซื้อเยอะยิ่งคุ้ม) ระบบจะแยกโปรและสร้างสคริปต์ TikTok Live 3 Session ต่อโปรโมชั่น",
+      "knowledge_file": "kmb-products.json",
+      "sample_file": "sample-kmb-shopee-promotions.txt",
+      "placeholder": "💖 เซตกลิ่นหอมมั่นใจ จับคู่ EDT + Underarm ครบในเซตเดียว\n>> 🛒 https://s.shopee.co.th/xxxxxxxxxx\n\nรายละเอียดกลิ่นและสินค้าในเซต...\n\n💸 ราคาพิเศษ:\nเซตคู่ เพียง 329.- (จากปกติ 478.-)"
+    },
+    {
       "id": "dgmr",
-      "label": "DGMR",
+      "label": "DGMR TikTok",
       "title": "DGMR Auto Script",
       "description": "สร้างสคริปต์ TikTok Live สำหรับ DAENG GI MEO RI จากโปรโมชั่นหลายรายการในข้อความเดียว พร้อม 3 Session ที่อ่านขายได้ประมาณ 2-3 นาทีต่อ Session",
       "knowledge_file": "dgmr-products.json",
       "sample_file": "sample-dgmr-promotions.txt",
       "placeholder": "1. แชมพู 2 ขวด + ครีมนวด 1 ขวด\nรับฟรี ผ้าโพกผมซับน้ำ 1 ชิ้น มูลค่า 399 บาท\nราคาปกติ 4,269 บาท\nราคาพิเศษ 2,350 บาท\n\n2. แชมพู + ครีมนวด + Hair Tonic\nรับฟรี ผ้าโพกผมซับน้ำ 1 ชิ้น มูลค่า 399 บาท\nราคาปกติ 3,969 บาท\nราคาพิเศษ 2,190 บาท"
+    },
+    {
+      "id": "dgmr-shopee",
+      "label": "DGMR Shopee",
+      "title": "DGMR Shopee Auto Script Generator",
+      "description": "วางแคปชั่นโปรโมชั่นสไตล์ Shopee ของ DAENG GI MEO RI (มีอีโมจิ ลิงก์ >> หรือราคาหลายระดับแบบซื้อเยอะยิ่งคุ้ม) ระบบจะแยกโปรและสร้างสคริปต์ TikTok Live 3 Session ต่อโปรโมชั่น",
+      "knowledge_file": "dgmr-products.json",
+      "sample_file": "sample-dgmr-shopee-promotions.txt",
+      "placeholder": "💆‍♀️ Hair Fall Complete Set ดูแลผมร่วงครบ Routine\n>> 🛒 https://s.shopee.co.th/xxxxxxxxxx\n\nรายละเอียด Routine และสินค้าในเซต...\n\n💸 ราคาพิเศษ:\nจากปกติ 3,969.- เพียง 2,190.-"
     }
   ]
 }
