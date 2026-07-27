@@ -74,5 +74,5 @@ skinoxy-auto-script-mvp/
 
 - **OCR อ่านภาพ infographic/กราฟิกดีไซน์ไม่ได้ดี** — Tesseract.js เหมาะกับตัวหนังสือพิมพ์บนพื้นเรียบ ถ้าเป็นโปสเตอร์ที่มีรูปสินค้า/ไอคอน/พื้นหลังลายทับตัวอักษร ต้องใช้เครื่องมือครอปเลือกเฉพาะส่วนตัวหนังสือก่อน ถ้ายังไม่พอ ต้องพิมพ์ข้อมูลโปรเองแทน (อย่าปล่อยให้ generate จากข้อความ OCR ที่มั่ว เพราะราคา/ของแถมจะผิดจากของจริง)
 - Tesseract.js โหลดจาก CDN (jsdelivr) ตอนเปิดหน้าเว็บครั้งแรก จึงต้องมีอินเทอร์เน็ต (ไม่ได้ผูก backend/API key ของเราเอง)
-- ยังไม่มี deploy link ออนไลน์ถาวร (ดู `HANDOFF.md` ที่ root โปรเจคสำหรับสถานะล่าสุดเรื่องนี้)
+- Deploy อยู่ที่ https://towtongisgod.github.io/live-script-generator/ (GitHub Pages, repo: https://github.com/towtongisgod/live-script-generator) — หลังแก้โค้ดต้อง `git add && git commit && git push` เพื่ออัปเดตเว็บออนไลน์ (ดู `HANDOFF.md` ที่ root โปรเจคสำหรับรายละเอียด)
 - ยังไม่ทำ AI Auditor, Dashboard, MC Coach, Login, Database ภายนอก หรือระบบชำระเงิน (นอกสโคปของ MVP นี้)
