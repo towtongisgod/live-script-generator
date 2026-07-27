@@ -1489,14 +1489,26 @@ function enforceLanguageRules(script, p){
 
 function render(promos){
   results.innerHTML = '';
+  const abMode = document.getElementById('abTestMode').checked;
 
   promos.forEach(p => {
     const card = document.createElement('article');
     card.className = 'card';
-    const script = createScript(p, p.scriptVariant || 0);
     const formulaLabel = p.allVariantsSelected
       ? 'ทุกสูตร/กลิ่นที่ร่วมรายการ'
       : formatVariantList(p.selectedVariants) || '-';
+
+    const scriptSectionHtml = abMode
+      ? ['A', 'B', 'C'].map((letter, i) => `
+        <div class="ab-variant">
+          <div class="ab-variant-header">
+            <h3>แบบ ${letter}</h3>
+            <button class="copy-variant" data-variant="${i}">Copy แบบ ${letter}</button>
+          </div>
+          <pre class="script-output">${escapeHtml(createScript(p, i))}</pre>
+        </div>
+      `).join('')
+      : `<pre class="script-output">${escapeHtml(createScript(p, p.scriptVariant || 0))}</pre>`;
 
     card.innerHTML = `
       <div class="card-header">
@@ -1505,8 +1517,7 @@ function render(promos){
           <h2>โปรโมชั่นที่ ${p.index}</h2>
         </div>
         <div class="card-actions">
-          <button class="generate-again">Generate Again</button>
-          <button class="copy-one">Copy Script</button>
+          ${abMode ? '' : '<button class="generate-again">Generate Again</button><button class="copy-one">Copy Script</button>'}
         </div>
       </div>
       <div class="meta">
@@ -1527,19 +1538,31 @@ function render(promos){
         <div><strong>จำนวนจำกัด</strong><br>${p.limited ? 'ระบุ' : '-'}</div>
       </div>
       ${p.warning ? `<p class="warning"><strong>หมายเหตุ:</strong> ${escapeHtml(p.warning)}</p>` : ''}
-      <pre class="script-output">${escapeHtml(script)}</pre>
+      ${scriptSectionHtml}
     `;
 
-    card.querySelector('.copy-one').addEventListener('click', async () => {
-      await navigator.clipboard.writeText(script);
-      setStatus(`คัดลอกโปรโมชั่นที่ ${p.index} แล้ว`);
-    });
+    if (abMode) {
+      card.querySelectorAll('.copy-variant').forEach(btn => {
+        btn.addEventListener('click', async () => {
+          const variantIndex = Number(btn.dataset.variant);
+          const letter = ['A', 'B', 'C'][variantIndex];
+          await navigator.clipboard.writeText(createScript(p, variantIndex));
+          setStatus(`คัดลอกโปรโมชั่นที่ ${p.index} แบบ ${letter} แล้ว`);
+        });
+      });
+    } else {
+      const script = createScript(p, p.scriptVariant || 0);
+      card.querySelector('.copy-one').addEventListener('click', async () => {
+        await navigator.clipboard.writeText(script);
+        setStatus(`คัดลอกโปรโมชั่นที่ ${p.index} แล้ว`);
+      });
 
-    card.querySelector('.generate-again').addEventListener('click', () => {
-      p.scriptVariant = (p.scriptVariant || 0) + 1;
-      render(state.currentPromos);
-      setStatus(`Generate Again โปรโมชั่นที่ ${p.index} แล้ว โดยใช้ข้อมูลโปรโมชั่นเดิม`);
-    });
+      card.querySelector('.generate-again').addEventListener('click', () => {
+        p.scriptVariant = (p.scriptVariant || 0) + 1;
+        render(state.currentPromos);
+        setStatus(`Generate Again โปรโมชั่นที่ ${p.index} แล้ว โดยใช้ข้อมูลโปรโมชั่นเดิม`);
+      });
+    }
 
     results.appendChild(card);
   });

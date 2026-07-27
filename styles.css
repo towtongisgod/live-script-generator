@@ -23,3 +23,8 @@ pre{white-space:pre-wrap;background:#f8fafc;padding:14px;border-radius:8px;borde
 .crop-box{background:var(--surface);border-radius:10px;padding:16px;max-width:min(90vw,900px);max-height:90vh;overflow:auto}
 .crop-canvas-wrap{overflow:auto;max-height:60vh;border:1px solid var(--border);border-radius:8px;margin-top:10px}
 #cropCanvas{display:block;cursor:crosshair;touch-action:none}
+.ab-toggle{display:flex;align-items:center;gap:6px;font-size:14px;color:var(--text);cursor:pointer}
+.ab-variant{margin-bottom:14px;padding-bottom:14px;border-bottom:1px dashed var(--border)}
+.ab-variant:last-child{margin-bottom:0;padding-bottom:0;border-bottom:0}
+.ab-variant-header{display:flex;align-items:center;justify-content:space-between;gap:8px;margin-bottom:8px}
+.ab-variant-header h3{margin:0;font-size:15px}
