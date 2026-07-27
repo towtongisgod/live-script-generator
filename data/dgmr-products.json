@@ -1,0 +1,141 @@
+{
+  "brand_id": "dgmr",
+  "brand": "DAENG GI MEO RI",
+  "brand_short": "DGMR",
+  "positioning": "Hair Care Brand",
+  "brand_character": {
+    "positioning": "Hair Care Routine Brand",
+    "pain_point_lens": "เริ่มจาก Hair Concern เช่น ผมร่วง ผมบาง หนังศีรษะมันง่าย ผมแห้งเสีย ผมชี้ฟู ผมแตกปลาย ผมขาดง่าย หรือเส้นผมอ่อนแอ แล้วพาเลือก Routine ที่ตรงกับปัญหา",
+    "mc_tone": "จริงจัง เข้าใจปัญหา ขายเป็น Routine ต่อเนื่อง โดยไม่พูดเหมือนแพทย์และไม่ฟันธงผลลัพธ์",
+    "session_flow": [
+      "เปิดจาก Hair Concern และความรู้สึกของคนที่เลือกแฮร์แคร์ไม่ถูก",
+      "อธิบายบทบาทสินค้าแต่ละชิ้นใน Routine",
+      "ทวนเซ็ต ราคา ของแถม และปิดให้กดตะกร้าเพื่อเลือกสูตรที่ร่วมรายการ"
+    ],
+    "promotion_mechanic": "Hourly Promotion Rotation",
+    "rotation_rules": [
+      "แต่ละชั่วโมงมี Hero Promotion ของตัวเอง",
+      "โปรนี้เล่นเฉพาะรอบนี้",
+      "หมดชั่วโมงจะเปลี่ยนไปเล่นสินค้าอื่น",
+      "ราคาหรือของแถมของโปรเดิมจะเปลี่ยนจริงตามรอบ",
+      "รอบต่อไปจะไม่เน้นโปรนี้แล้ว"
+    ]
+  },
+  "variant_rule": "ถ้าไม่ระบุ Series ให้ลูกค้าเลือกได้ทุกสูตรที่ร่วมรายการ โดยไม่เลือกสูตรแทนลูกค้าและไม่เขียนว่าได้รับครบทุกสูตร",
+  "products": [
+    {
+      "id": "jingi_shampoo_conditioner",
+      "name": "JINGI Shampoo & Conditioner",
+      "category": "Shampoo / Conditioner",
+      "size": "300 ml",
+      "aliases": ["JINGI", "Jingi", "จิงกิ", "แชมพู", "ครีมนวด", "Shampoo", "Conditioner"],
+      "hair_concerns": ["ผมร่วง", "ผมบาง", "หนังศีรษะมันง่าย", "เส้นผมอ่อนแอ"],
+      "benefits": ["ช่วยดูแลปัญหาผมร่วง", "ช่วยบำรุงหนังศีรษะและรากผม", "ช่วยให้ผมดูแข็งแรงขึ้น", "ช่วยให้หนังศีรษะรู้สึกสะอาดและเบาสบาย"],
+      "key_ingredients": ["20X Ginseng Extract", "6 Traditional Korean Herbs", "Korean Herbal Complex"],
+      "main_angle": "ดูแลปัญหาผมร่วงแบบ Routine ตั้งแต่หนังศีรษะถึงเส้นผม"
+    },
+    {
+      "id": "jingi_hair_tonic",
+      "name": "JINGI Hair Tonic",
+      "category": "Scalp Tonic",
+      "size": "100 ml",
+      "aliases": ["JINGI Hair Tonic", "Hair Tonic", "โทนิค", "โทนิคหนังศีรษะ"],
+      "hair_concerns": ["ผมร่วง", "รากผมอ่อนแอ", "หนังศีรษะต้องการการบำรุง"],
+      "benefits": ["ช่วยบำรุงหนังศีรษะ", "ช่วยบำรุงรากผม", "ให้ความรู้สึกสดชื่น", "ช่วยให้ Routine ดูแลผมร่วงครบขึ้น"],
+      "main_angle": "เหมือนสกินแคร์สำหรับหนังศีรษะ ใช้เป็นขั้นตอนบำรุงหลังสระ"
+    },
+    {
+      "id": "dlaesoo_shampoo_conditioner",
+      "name": "DLAESOO Shampoo & Conditioner",
+      "category": "Shampoo / Conditioner",
+      "size": "400 ml",
+      "aliases": ["DLAESOO", "Dlaesoo", "แชมพู", "ครีมนวด", "Shampoo", "Conditioner"],
+      "hair_concerns": ["ผมแห้งเสีย", "ผมชี้ฟู", "ผมแตกปลาย", "ผมผ่านสี ดัด ยืด หรือความร้อน"],
+      "benefits": ["ช่วยให้ผมนุ่มลื่น", "ช่วยลดการพันกัน", "ช่วยให้ผมดูมีน้ำหนัก", "ช่วยให้ผมดูเงาและสุขภาพดี"],
+      "main_angle": "Damage Care Routine สำหรับผมแห้งเสีย"
+    },
+    {
+      "id": "dlaesoo_hair_pack",
+      "name": "DLAESOO Hair Pack",
+      "category": "Hair Treatment",
+      "size": "200 ml",
+      "aliases": ["DLAESOO Hair Pack", "Hair Pack", "ทรีตเมนต์", "Treatment"],
+      "hair_concerns": ["ผมแห้งเสียมาก", "ผมฟู", "ผมพันกันง่าย"],
+      "benefits": ["ช่วยให้ผมนุ่มลื่น", "ช่วยให้หวีง่าย", "ช่วยลดความชี้ฟู", "ช่วยให้ผมดูมีน้ำหนัก"],
+      "main_angle": "Intensive Treatment สำหรับคนที่ครีมนวดอย่างเดียวยังไม่พอ"
+    },
+    {
+      "id": "jinsoo_shampoo_conditioner",
+      "name": "JINSOO Shampoo & Conditioner",
+      "category": "Shampoo / Conditioner",
+      "size": "300 ml",
+      "aliases": ["JINSOO", "Jinsoo", "จินซู", "แชมพู", "ครีมนวด", "Shampoo", "Conditioner"],
+      "hair_concerns": ["ผมขาดง่าย", "รู้สึกว่าผมยาวช้า", "เส้นผมอ่อนแอ"],
+      "benefits": ["ช่วยลดการขาดของเส้นผมจากความอ่อนแอ", "ช่วยให้ผมดูแข็งแรง", "ช่วยให้ผมนุ่มและมีน้ำหนัก"],
+      "main_angle": "ดูแลผมที่ขาดง่าย เพื่อช่วยรักษาความยาวของเส้นผม"
+    }
+  ],
+  "promotion_types": [
+    {
+      "id": "stock_up_set",
+      "name": "Stock-Up Set",
+      "selling_angle": "ซื้อครั้งเดียว ใช้ได้ยาว เหมาะกับคนใช้ประจำ"
+    },
+    {
+      "id": "daily_hair_care_set",
+      "name": "Daily Hair Care Set",
+      "selling_angle": "Routine พื้นฐาน ทำความสะอาดและบำรุงเส้นผม"
+    },
+    {
+      "id": "hair_fall_complete_set",
+      "name": "Hair Fall Complete Set",
+      "selling_angle": "ดูแลครบตั้งแต่ทำความสะอาดหนังศีรษะ บำรุงเส้นผม และบำรุงหนังศีรษะหลังสระ"
+    },
+    {
+      "id": "scalp_care_set",
+      "name": "Scalp Care Set",
+      "selling_angle": "เน้นทำความสะอาดและบำรุงหนังศีรษะ"
+    },
+    {
+      "id": "damage_recovery_set",
+      "name": "Damage Recovery Set",
+      "selling_angle": "ดูแลผมแห้งเสียแบบครบ Routine"
+    },
+    {
+      "id": "gift_bundle",
+      "name": "Gift Bundle",
+      "selling_angle": "ของแถมช่วยให้ Routine หลังสระครบขึ้น"
+    }
+  ],
+  "choose_by_hair_concern": [
+    "ผมร่วง หนังศีรษะมันง่าย เลือก JINGI",
+    "ผมแห้งเสีย ทำสี ดัด ยืด เลือก DLAESOO",
+    "ผมขาดง่าย รู้สึกว่าผมยาวช้า เลือก JINSOO"
+  ],
+  "language_rules": {
+    "gender_neutral": true,
+    "basket_word": "ตะกร้า",
+    "forbidden_terms": [
+      "ตะกร้าสีเหลือง",
+      "ครับ",
+      "ค่ะ",
+      "นะครับ",
+      "นะคะ",
+      "รักษาผมร่วง",
+      "ปลูกผม",
+      "ผมขึ้นใหม่",
+      "หยุดผมร่วงทันที",
+      "แก้หัวล้าน",
+      "ผมยาวเร็วแน่นอน",
+      "เห็นผล 100%",
+      "ใช้ได้ผลกับทุกคน",
+      "ผมนุ่มทันทีแน่นอน"
+    ],
+    "claim_guardrails": [
+      "ไม่พูดเหมือนแพทย์",
+      "ไม่ระบุเพศ",
+      "ใช้คำว่า ตะกร้า เท่านั้น",
+      "ขายจากปัญหาผมและ Routine โดยไม่แต่ง Claim เกิน Product Knowledge"
+    ]
+  }
+}

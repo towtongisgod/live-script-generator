@@ -1,0 +1,41 @@
+{
+  "default_brand_id": "skinoxy",
+  "brands": [
+    {
+      "id": "skinoxy",
+      "label": "SKINOXY",
+      "title": "SKINOXY Auto Script Generator",
+      "description": "วางโปรโมชั่นหลายรายการเป็นก้อนเดียว ระบบจะแยกโปรและสร้างสคริปต์ TikTok Live 3 Session ต่อโปรโมชั่น โดยแต่ละ Session อ่านขายได้ประมาณ 2-3 นาที",
+      "knowledge_file": "skinoxy-products.json",
+      "sample_file": "sample-promotions.txt",
+      "placeholder": "1. Toner Pad 1 กระปุก ราคาปกติ 399 พิเศษ 239 + คูปองลดเพิ่ม 18% เหลือเพียง 196.- (จำนวนจำกัด)"
+    },
+    {
+      "id": "skinoxy-shopee",
+      "label": "SKINOXY Shopee",
+      "title": "SKINOXY Shopee Auto Script Generator",
+      "description": "วางแคปชั่นโปรโมชั่นสไตล์ Shopee ของ SKINOXY (มีอีโมจิ ลิงก์ >> คูปอง หรือราคาหลายระดับแบบซื้อเยอะยิ่งคุ้ม) ระบบจะแยกโปรและสร้างสคริปต์ TikTok Live 3 Session ต่อโปรโมชั่น",
+      "knowledge_file": "skinoxy-products.json",
+      "sample_file": "sample-skinoxy-shopee-promotions.txt",
+      "placeholder": "🎭 โปรซื้อยกกล่องคุ้มกว่าเดิม!\n>> 🛒 https://s.shopee.co.th/xxxxxxxxxx\n\nรายละเอียดสินค้าและสูตรที่เลือกได้...\n\n💸 ราคาพิเศษ:\nซื้อ 1 กล่อง เพียง 251.- (จากปกติ 499.-)\nซื้อ 2 กล่อง เพียง 412.- (จากปกติ 998.-)"
+    },
+    {
+      "id": "kmb",
+      "label": "KISS MY BODY",
+      "title": "KMB Auto Script",
+      "description": "สร้างสคริปต์ TikTok Live สำหรับ KISS MY BODY จากโปรโมชั่นหลายรายการในข้อความเดียว พร้อม 3 Session ที่อ่านขายได้ประมาณ 2-3 นาทีต่อ Session",
+      "knowledge_file": "kmb-products.json",
+      "sample_file": "sample-kmb-promotions.txt",
+      "placeholder": "1. เซตคู่ความมั่นใจหอมตลอดวัน\nEDT Revamp กลิ่น Sweet Poison\n+ Underarm Dry Serum สูตร Blink Bright สีชมพู\nราคาปกติ 478 บาท\nราคาพิเศษ 329 บาท\n\n2. Body Set 3 ชิ้น\nShower + Lotion + EDT กลิ่น Sweet Poison\nราคาปกติ 997 บาท\nราคาพิเศษ 649 บาท"
+    },
+    {
+      "id": "dgmr",
+      "label": "DGMR",
+      "title": "DGMR Auto Script",
+      "description": "สร้างสคริปต์ TikTok Live สำหรับ DAENG GI MEO RI จากโปรโมชั่นหลายรายการในข้อความเดียว พร้อม 3 Session ที่อ่านขายได้ประมาณ 2-3 นาทีต่อ Session",
+      "knowledge_file": "dgmr-products.json",
+      "sample_file": "sample-dgmr-promotions.txt",
+      "placeholder": "1. แชมพู 2 ขวด + ครีมนวด 1 ขวด\nรับฟรี ผ้าโพกผมซับน้ำ 1 ชิ้น มูลค่า 399 บาท\nราคาปกติ 4,269 บาท\nราคาพิเศษ 2,350 บาท\n\n2. แชมพู + ครีมนวด + Hair Tonic\nรับฟรี ผ้าโพกผมซับน้ำ 1 ชิ้น มูลค่า 399 บาท\nราคาปกติ 3,969 บาท\nราคาพิเศษ 2,190 บาท"
+    }
+  ]
+}

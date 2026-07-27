@@ -1,0 +1,38 @@
+{
+  "skinoxy": {
+    "accent": "#111827",
+    "accent_soft": "#e5e7eb",
+    "surface": "#ffffff",
+    "page": "#f6f7f9",
+    "text": "#1f2937",
+    "muted": "#64748b",
+    "border": "#e5e7eb"
+  },
+  "skinoxy-shopee": {
+    "accent": "#ee4d2d",
+    "accent_soft": "#fdeae5",
+    "surface": "#ffffff",
+    "page": "#fff8f6",
+    "text": "#1f2937",
+    "muted": "#64748b",
+    "border": "#fbd7cd"
+  },
+  "kmb": {
+    "accent": "#b11f5c",
+    "accent_soft": "#fde7f0",
+    "surface": "#ffffff",
+    "page": "#fff7fa",
+    "text": "#24151d",
+    "muted": "#7a5364",
+    "border": "#f3c7d8"
+  },
+  "dgmr": {
+    "accent": "#2f5d50",
+    "accent_soft": "#e4f2ed",
+    "surface": "#ffffff",
+    "page": "#f4faf7",
+    "text": "#17251f",
+    "muted": "#527067",
+    "border": "#c9ddd5"
+  }
+}

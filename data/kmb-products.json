@@ -1,0 +1,221 @@
+{
+  "brand_id": "kmb",
+  "brand": "KISS MY BODY",
+  "brand_short": "KMB",
+  "positioning": "Lifestyle Fragrance Brand",
+  "brand_character": {
+    "positioning": "Lifestyle Fragrance Brand",
+    "pain_point_lens": "เริ่มจากปัญหาเลือกกลิ่นไม่ถูก อยากมีกลิ่นประจำตัว อยากให้ Mood กับ Character ชัด หรืออยากให้ Routine ความหอมไปในทิศทางเดียวกัน",
+    "mc_tone": "สนุก มีภาพจำ ขายจาก Mood, Character, Occasion และ Routine โดยไม่พูดผลลัพธ์เกินข้อมูล",
+    "session_flow": [
+      "เปิดจาก Mood หรือสถานการณ์ที่ลูกค้าอยากเป็น",
+      "เล่ากลิ่นและสินค้าในเซ็ตให้เห็น Character ที่ชัด",
+      "ทวนความคุ้ม ราคา และปิดให้กดตะกร้าเพื่อเลือกกลิ่นหรือสูตรที่ร่วมรายการ"
+    ],
+    "selling_method": "Perfume Diagnosis",
+    "diagnosis_steps": [
+      "ใช้ในโอกาสไหน",
+      "ชอบกลิ่นแนวไหน",
+      "ต้องการความติดทนระดับไหน",
+      "คัดเหลือ 2 ตัว",
+      "ปิดตัวหลัก",
+      "Step-up ไป Pair Bundle"
+    ]
+  },
+  "variant_rule": "ถ้าไม่ระบุกลิ่นหรือสูตร ให้ลูกค้าเลือกได้ทุกกลิ่นหรือทุกสูตรที่ร่วมรายการ โดยไม่เลือกแทนลูกค้าและไม่เขียนว่าได้รับครบทุกกลิ่น",
+  "products": [
+    {
+      "id": "edt_revamp",
+      "name": "EDT Revamp",
+      "category": "Fragrance",
+      "aliases": ["EDT Revamp", "EDT", "Perfume", "Fragrance", "น้ำหอม"],
+      "variant_rule": "ถ้าไม่ระบุกลิ่น ให้ลูกค้าเลือกได้ทุกกลิ่นที่ร่วมรายการ",
+      "variants": [
+        {
+          "id": "crazy_in_love",
+          "name": "Crazy In Love",
+          "aliases": ["Crazy In Love"],
+          "category": "Fragrance",
+          "family": "Fruity Floral",
+          "notes": ["Red Berries", "Rose", "Amber"],
+          "mood": ["หวานสดใส", "ขี้เล่น", "โรแมนติก", "เข้าถึงง่าย"],
+          "occasion": ["ใช้ทุกวัน", "วันเรียนหรือวันทำงาน", "วันเที่ยว"],
+          "selling_angles": ["Everyday Sweet", "Romantic Mood", "Approachable Fragrance"]
+        },
+        {
+          "id": "lost_in_paradise",
+          "name": "Lost In Paradise",
+          "aliases": ["Lost In Paradise"],
+          "category": "Fragrance",
+          "family": "Fruity Floral Luxury",
+          "notes": ["Apple", "Rose", "Vanilla"],
+          "mood": ["หรู", "ดูโต", "มีคลาส", "น่าค้นหา"],
+          "occasion": ["คาเฟ่", "ดินเนอร์", "งานพิเศษ"],
+          "selling_angles": ["Clean Luxury", "Classy Sweet", "Premium Character"]
+        },
+        {
+          "id": "sweet_vanilla_cotton",
+          "name": "Sweet Vanilla Cotton",
+          "aliases": ["Sweet Vanilla Cotton"],
+          "category": "Fragrance",
+          "family": "Vanilla Sweet Gourmand",
+          "notes": ["Coconut", "Caramel", "Vanilla"],
+          "mood": ["อบอุ่น", "นุ่ม", "Cozy", "สบายใจ"],
+          "occasion": ["วันชิล", "ก่อนนอน", "วันที่อากาศเย็น"],
+          "selling_angles": ["Comfort Mood", "Vanilla Lover", "Soft Gourmand"]
+        },
+        {
+          "id": "sweet_poison",
+          "name": "Sweet Poison",
+          "aliases": ["Sweet Poison"],
+          "category": "Fragrance",
+          "family": "Fruity Floral Sexy",
+          "notes": ["Peach", "Rose", "Musk"],
+          "mood": ["มั่นใจ", "เซ็กซี่แบบมีระดับ", "โดดเด่น", "Romantic Luxury"],
+          "occasion": ["วันสำคัญ", "Dinner", "Party", "Night Out"],
+          "selling_angles": ["Confidence", "Sexy Classy", "Statement Fragrance"]
+        },
+        {
+          "id": "nude_naked_intense",
+          "name": "Nude & Naked Intense",
+          "aliases": ["Nude & Naked Intense", "Nude and Naked Intense", "Nude Naked Intense"],
+          "category": "Intense Fragrance",
+          "family": "Deep Sensual Luxury",
+          "mood": ["เข้ม", "ลึกลับ", "เท่", "Luxury"],
+          "occasion": ["กลางคืน", "Dinner", "งานพิเศษ"],
+          "selling_angles": ["Intense Fragrance", "Strong Character", "Signature Scent"]
+        },
+        {
+          "id": "checkmate",
+          "name": "Checkmate",
+          "aliases": ["Checkmate"],
+          "category": "Fragrance",
+          "family": "Woody Oriental",
+          "mood": ["เท่", "สุขุม", "Sophisticated", "Quiet Luxury"],
+          "occasion": ["วันทำงาน", "Dinner", "กลางคืน"],
+          "selling_angles": ["Office to Night", "Clean and Sexy", "Versatile Fragrance"]
+        }
+      ]
+    },
+    {
+      "id": "perfume_shower_gel",
+      "name": "Perfume Shower Gel",
+      "category": "Perfume Shower Gel",
+      "aliases": ["Perfume Shower Gel", "Shower Gel", "Shower", "เจลอาบน้ำ"],
+      "variant_rule": "ถ้าไม่ระบุกลิ่น ให้ลูกค้าเลือกได้ทุกกลิ่นที่ร่วมรายการ",
+      "variants": [
+        {
+          "id": "apple_sherbet",
+          "name": "Apple Sherbet Perfume Shower Gel",
+          "aliases": ["Apple Sherbet", "Apple Sherbet Perfume Shower Gel"],
+          "category": "Perfume Shower Gel",
+          "family": "Gourmand Fruity",
+          "notes": ["Candy Apple", "Raspberry", "Sweet Syrup"],
+          "mood": ["สดใส", "หวานซน", "ขี้เล่น"],
+          "selling_angles": ["Shower Layering", "Candy Fragrance", "เริ่มความหอมตั้งแต่ตอนอาบน้ำ"],
+          "benefits": ["ช่วยทำความสะอาดผิว", "ฟองนุ่ม", "ช่วยให้ผิวรู้สึกชุ่มชื้นหลังอาบน้ำ"]
+        },
+        {
+          "id": "desire",
+          "name": "Desire Perfume Shower Gel",
+          "aliases": ["Desire", "Desire Perfume Shower Gel"],
+          "category": "Perfume Shower Gel",
+          "family": "Floral Fresh Luxury",
+          "notes": ["Peony", "White Musk", "Citrus Lemon"],
+          "mood": ["สะอาดหรู", "สดชื่น", "สุภาพ", "มีคลาส"],
+          "selling_angles": ["Clean Luxury", "Office Fragrance", "Shower Layering"],
+          "benefits": ["ช่วยทำความสะอาดผิวอย่างอ่อนโยน", "ช่วยเติมความชุ่มชื้น"]
+        }
+      ]
+    },
+    {
+      "id": "underarm_dry_serum",
+      "name": "Underarm Dry Serum",
+      "category": "Underarm Care",
+      "aliases": ["Underarm Dry Serum", "Underarm", "Dry Serum", "ใต้วงแขน"],
+      "variant_rule": "ถ้าไม่ระบุสูตร ให้ลูกค้าเลือกได้ทุกสูตรที่ร่วมรายการ",
+      "variants": [
+        {
+          "id": "blink_bright",
+          "name": "Blink Bright",
+          "aliases": ["Blink Bright"],
+          "color": "สีชมพู",
+          "category": "Underarm Care",
+          "main_angles": ["ดูแลใต้วงแขน", "เพิ่มความมั่นใจในชีวิตประจำวัน", "ใช้คู่กับน้ำหอมเป็น Confidence Routine"],
+          "claim_guardrail": "ห้ามแต่ง Claim เพิ่ม หากยังไม่มี Product Detail อื่น"
+        }
+      ]
+    },
+    {
+      "id": "body_lotion_revamp",
+      "name": "Body Lotion Revamp",
+      "category": "Fragrance Body Lotion",
+      "aliases": ["Body Lotion Revamp", "Body Lotion", "Lotion", "โลชั่น"],
+      "main_angles": ["บำรุงผิว", "ใช้ Layering กลิ่นก่อนฉีด EDT", "ช่วยให้ Routine ความหอมครบขึ้น"],
+      "claim_guardrail": "ห้ามแต่งส่วนผสมและ Claim ที่ไม่มีข้อมูล"
+    }
+  ],
+  "promotion_types": [
+    {
+      "id": "confidence_set",
+      "name": "Confidence Set",
+      "selling_angle": "ความหอมและความมั่นใจใน Routine เดียว"
+    },
+    {
+      "id": "fragrance_layering_set",
+      "name": "Fragrance Layering Set",
+      "selling_angle": "Layering ความหอมตั้งแต่อาบน้ำ ทาโลชั่น และปิดท้ายด้วยน้ำหอม"
+    },
+    {
+      "id": "fragrance_duo",
+      "name": "Fragrance Duo",
+      "selling_angle": "ใช้สลับตาม Mood หรือใช้คู่กันใน Routine ความหอม"
+    },
+    {
+      "id": "luxury_lifestyle_set",
+      "name": "Luxury Lifestyle Set",
+      "selling_angle": "Character, Luxury และความพิเศษของเซ็ต"
+    },
+    {
+      "id": "single_fragrance",
+      "name": "Single Fragrance",
+      "selling_angle": "Mood, Occasion, Character และราคาเริ่มต้นลองง่าย"
+    }
+  ],
+  "choose_by_mood": [
+    "อยากได้หวานสดใส เลือก Crazy In Love",
+    "อยากได้หรูมีคลาส เลือก Lost In Paradise",
+    "อยากได้อบอุ่น Cozy เลือก Sweet Vanilla Cotton",
+    "อยากได้มั่นใจและโดดเด่น เลือก Sweet Poison",
+    "อยากได้เข้ม Luxury เลือก Nude & Naked Intense",
+    "อยากได้เท่ สุขุม เลือก Checkmate"
+  ],
+  "language_rules": {
+    "gender_neutral": true,
+    "basket_word": "ตะกร้า",
+    "forbidden_terms": [
+      "ตะกร้าสีเหลือง",
+      "ครับ",
+      "ค่ะ",
+      "นะครับ",
+      "นะคะ",
+      "ผู้หญิง",
+      "ผู้ชาย",
+      "สาว ๆ",
+      "สาวๆ",
+      "หนุ่ม ๆ",
+      "หนุ่มๆ",
+      "ฉีดแล้วทุกคนหัน",
+      "ฉีดแล้วคนหลงรัก",
+      "คนส่วนใหญ่ชอบแน่นอน",
+      "ติดทนทั้งวัน",
+      "ดีที่สุด",
+      "อันดับหนึ่ง"
+    ],
+    "claim_guardrails": [
+      "ไม่ระบุเพศของ MC หรือผู้ชม",
+      "ใช้คำว่า ตะกร้า เท่านั้น",
+      "ไม่แต่ง Claim ของ Underarm, Lotion หรือ Shower Gel เกิน Product Knowledge"
+    ]
+  }
+}

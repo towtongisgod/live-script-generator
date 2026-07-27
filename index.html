@@ -1,0 +1,49 @@
+<!doctype html>
+<html lang="th">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width,initial-scale=1" />
+  <title>Auto Script Generator</title>
+  <link rel="stylesheet" href="styles.css" />
+  <script src="https://cdn.jsdelivr.net/npm/tesseract.js@5/dist/tesseract.min.js"></script>
+</head>
+<body>
+  <main class="container">
+    <header>
+      <nav id="brandTabs" class="brand-tabs" aria-label="เลือกแบรนด์"></nav>
+      <h1 id="pageTitle">SKINOXY Auto Script Generator</h1>
+      <p id="pageDescription">วางโปรโมชั่นหลายรายการเป็นก้อนเดียว ระบบจะแยกโปรและสร้างสคริปต์ TikTok Live 3 Session ต่อโปรโมชั่น โดยแต่ละ Session อ่านขายได้ประมาณ 2-3 นาที</p>
+    </header>
+
+    <section class="panel">
+      <label for="rawInput">ข้อมูลโปรโมชั่นดิบ</label>
+      <textarea id="rawInput" rows="14" placeholder="วางข้อมูลโปรโมชั่นที่นี่..."></textarea>
+      <div class="actions">
+        <button id="loadSample">โหลดตัวอย่าง</button>
+        <button id="uploadImage" type="button">📷 ถอดข้อความจากรูป</button>
+        <input type="file" id="imageInput" accept="image/*" hidden />
+        <button id="generate" class="primary">Generate Script</button>
+        <button id="copyAll">Copy All</button>
+      </div>
+      <p id="status" class="status"></p>
+    </section>
+
+    <section id="results"></section>
+
+    <div id="cropModal" class="crop-modal" hidden>
+      <div class="crop-box">
+        <p>ลากเลือกเฉพาะส่วนที่เป็นตัวหนังสือ (เลี่ยงรูปสินค้า/ไอคอน/พื้นหลังลาย) แล้วกดถอดข้อความ</p>
+        <div class="crop-canvas-wrap">
+          <canvas id="cropCanvas"></canvas>
+        </div>
+        <div class="actions">
+          <button id="cropCancel" type="button">ยกเลิก</button>
+          <button id="cropUseWhole" type="button">ใช้ทั้งรูป</button>
+          <button id="cropExtract" class="primary" type="button">ถอดข้อความจากส่วนที่เลือก</button>
+        </div>
+      </div>
+    </div>
+  </main>
+  <script src="app.js"></script>
+</body>
+</html>
