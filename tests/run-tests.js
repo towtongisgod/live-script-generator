@@ -251,7 +251,7 @@ Object.keys(primaryById).forEach(accountId => {
 const skinoxyTikTok = pkg(firstPromo('skinoxy'), 'B', { assignment: manualAssignment('B'), startTime: '19:00' });
 const skinoxyShopee = pkg(firstPromo('skinoxy-shopee'), 'B', { assignment: manualAssignment('B'), startTime: '19:00' });
 check('TikTok and Shopee persona scripts differ', skinoxyTikTok.mainSpokenScript !== skinoxyShopee.mainSpokenScript);
-check('TikTok CTA uses basket viewing language', skinoxyTikTok.mainSpokenScript.includes('กดดูในตะกร้า'));
+check('TikTok CTA follows parsed single-product truth', skinoxyTikTok.mainSpokenScript.includes('เข้าไปดูสินค้าในตะกร้า'));
 check('Shopee CTA uses set basket language', skinoxyShopee.mainSpokenScript.includes('เข้าไปดูเซ็ตในตะกร้า'));
 
 const generatedAgain0 = pkg(firstPromo('skinoxy'), 'A', { hookVariant: 0 }).mainSpokenScript;
@@ -261,7 +261,7 @@ check('Generate Again keeps promo price', generatedAgain1.includes('239'));
 
 console.log('\n=== Content QA V2 regression ===');
 const QA_TIMES = { skinoxy: '09:30', 'skinoxy-shopee': '09:00', kmb: '11:00', 'kmb-shopee': '09:00', dgmr: '10:00' };
-const PRODUCER_PHRASES = ['จุดที่ควรจับ', 'จังหวะการพูด', 'เวลาช่วยเลือก ให้พูด', 'ระหว่างเล่าให้เว้นจังหวะ', 'เมื่อต้องพูดราคา', 'ย้ำอีกครั้งว่าราคา'];
+const PRODUCER_PHRASES = ['จุดที่ควรจับ', 'จังหวะการพูด', 'เวลาช่วยเลือก ให้พูด', 'ระหว่างเล่าให้เว้นจังหวะ', 'เมื่อต้องพูดราคา', 'ย้ำอีกครั้งว่าราคา', 'เพราะในไลฟ์ต้อง', 'ปิดการขาย'];
 const TEMPLATE_ENGLISH = ['Mood', 'Routine', 'Character', 'Series'];
 const qaPackages = {};
 
@@ -280,11 +280,30 @@ Object.keys(SMOKE_INPUTS).forEach(accountId => {
     check(`${accountId} ${item.metadata.assigned_pattern}: no template English`, TEMPLATE_ENGLISH.every(term => !new RegExp(`\\b${term}\\b`, 'i').test(text)));
     check(`${accountId} ${item.metadata.assigned_pattern}: estimated speaking time 2.5-3.5 minutes`, item.estimatedSpeakingTime >= 2.5 && item.estimatedSpeakingTime <= 3.5, `${item.estimatedSpeakingTime}`);
     check(`${accountId} ${item.metadata.assigned_pattern}: estimatedSpeakingTime metadata exists`, /นาที$/.test(item.metadata.estimatedSpeakingTime));
-    check(`${accountId} ${item.metadata.assigned_pattern}: no adjacent repeated CTA`, (text.match(/กดดูในตะกร้า|เข้าไปดูเซ็ตในตะกร้า/g) || []).length === 1);
+    check(`${accountId} ${item.metadata.assigned_pattern}: no adjacent repeated CTA`, (text.match(/เข้าไปดู(?:สินค้า|เซ็ต)ในตะกร้า/g) || []).length === 1);
     check(`${accountId} ${item.metadata.assigned_pattern}: producer notes stay separate`, item.producerNotes.length > 0 && !text.includes(item.producerNotes[0]));
   });
   check(`${accountId}: A is longest and C is shortest`, scripts[0].mainSpokenScript.length > scripts[1].mainSpokenScript.length && scripts[1].mainSpokenScript.length > scripts[2].mainSpokenScript.length);
 });
+
+const singleProductPackages = [...qaPackages.kmb, ...qaPackages['kmb-shopee']];
+singleProductPackages.forEach(item => {
+  const text = item.mainSpokenScript;
+  check(`single product ${item.metadata.script_id}: no plural-only wording`, !text.includes('ของทุกชิ้น') && !text.includes('เซ็ตนี้'));
+  check(`single product ${item.metadata.script_id}: no unavailable option CTA`, !text.includes('เลือกสูตร') && !text.includes('เลือกกลิ่น'));
+  check(`single product ${item.metadata.script_id}: uses product basket CTA`, text.includes('เข้าไปดูสินค้าในตะกร้า'));
+});
+
+Object.values(qaPackages).forEach(packages => {
+  const closing = packages.find(item => item.metadata.assigned_pattern === 'C').mainSpokenScript;
+  check('Pattern C has no purchase-delaying phrase', !/ไม่จำเป็นต้องรีบเลือก|เลือกเมื่อ/.test(closing));
+});
+
+const skinoxyClosing = qaPackages.skinoxy.find(item => item.metadata.assigned_pattern === 'C').mainSpokenScript;
+check('SKINOXY Pattern C states safe 204.50 baht per tube', skinoxyClosing.includes('ราคาเฉลี่ย 204.50 บาทต่อหลอด'));
+const dgmrClosing = qaPackages.dgmr.find(item => item.metadata.assigned_pattern === 'C');
+check('DGMR Pattern C states safe 699.67 baht per item', dgmrClosing.mainSpokenScript.includes('ราคาเฉลี่ย 699.67 บาทต่อชิ้น'));
+check('DGMR Pattern C does not classify Jingi Tonic as a gift', dgmrClosing.productTruth.gift === null && !/ของแถม(?:เป็น|:)\s*Jingi Tonic/i.test(dgmrClosing.mainSpokenScript));
 
 function shingleOverlap(a, b, size = 5){
   const shingles = text => {
