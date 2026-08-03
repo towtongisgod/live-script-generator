@@ -171,6 +171,54 @@ check('missing price does not calculate discount percent', missingPrice.discount
 const missingQty = core.parsePromotion('Toner Pad ราคาโปร 239', 0, readJson('data/skinoxy-products.json'), core.LSG_ACCOUNTS[0], {});
 check('missing quantity does not calculate average price', missingQty.averagePrice === null);
 
+console.log('\n=== Product Truth V2 smoke tests ===');
+const SMOKE_INPUTS = {
+  skinoxy: 'Body Serum 2 หลอด\nราคาปกติ 798 บาท\nราคาโปร 409 บาท\nได้รับ Postcard',
+  'skinoxy-shopee': 'Body Serum 2 หลอด\nราคาปกติ 798 บาท\nราคาโปร 409 บาท\nได้รับ Postcard',
+  kmb: 'EDT Revamp Sweet Poison\nราคาปกติ 299 บาท\nราคาโปร 179 บาท',
+  'kmb-shopee': 'EDT Revamp Sweet Poison\nราคาปกติ 299 บาท\nราคาโปร 179 บาท',
+  dgmr: 'แชมพู 2 ขวด + Jingi Tonic 1 ขวด\nราคาปกติ 3,570 บาท\nราคาโปร 2,099 บาท'
+};
+
+function parseSmoke(accountId){
+  const account = core.LSG_ACCOUNTS.find(item => item.id === accountId);
+  const config = brandsConfig.brands.find(item => item.id === accountId);
+  return core.parsePromotion(SMOKE_INPUTS[accountId], 0, readJson(path.join('data', config.knowledge_file)), account, {});
+}
+
+const skinoxySmoke = parseSmoke('skinoxy');
+check('SKINOXY: Body Serum count is 2', skinoxySmoke.itemCount === 2 && skinoxySmoke.totalIncludedCount === 2);
+check('SKINOXY: Postcard is an explicit gift', skinoxySmoke.gift === 'Postcard' && skinoxySmoke.giftCount === 1);
+check('SKINOXY: included product excludes gift', skinoxySmoke.includedProducts.length === 1 && skinoxySmoke.includedProducts[0].name === 'Body Serum');
+check('SKINOXY: Product Truth passes validation', skinoxySmoke.productTruthValidation.valid);
+
+const dgmrSmoke = parseSmoke('dgmr');
+check('DGMR: plus joins included products', dgmrSmoke.includedProducts.length === 2 && dgmrSmoke.gift === null);
+check('DGMR: shampoo 2 plus tonic 1 totals 3', dgmrSmoke.itemCount === 3 && dgmrSmoke.totalIncludedCount === 3);
+check('DGMR: Jingi Tonic appears once in included products', dgmrSmoke.includedProducts.filter(item => /Jingi Tonic/i.test(item.name)).length === 1);
+check('DGMR: safe price per item is 699.67', Math.abs(dgmrSmoke.averagePrice - 699.6666667) < 0.01);
+check('DGMR: Product Truth passes validation', dgmrSmoke.productTruthValidation.valid);
+
+const joinedProducts = core.parsePromotion('Body Serum 1 หลอด และ Lotion 1 ขวด ราคาโปร 399 บาท', 0, readJson('data/skinoxy-products.json'), core.LSG_ACCOUNTS[0], {});
+check('word "และ" joins included products', joinedProducts.itemCount === 2 && joinedProducts.gift === null);
+const withProducts = core.parsePromotion('Body Serum 1 หลอด พร้อม Lotion 1 ขวด ราคาโปร 399 บาท', 0, readJson('data/skinoxy-products.json'), core.LSG_ACCOUNTS[0], {});
+check('word "พร้อม" alone joins included products', withProducts.itemCount === 2 && withProducts.gift === null);
+const pairProduct = core.parsePromotion('Body Serum คู่ ราคาโปร 409 บาท', 0, readJson('data/skinoxy-products.json'), core.LSG_ACCOUNTS[0], {});
+check('word "คู่" means two included products', pairProduct.itemCount === 2 && pairProduct.gift === null);
+
+const malformedGift = core.parsePromotion('Body Serum 2 หลอด ราคาโปร 409 บาท รับฟรี', 0, readJson('data/skinoxy-products.json'), core.LSG_ACCOUNTS[0], {});
+const malformedPackage = pkg(malformedGift, 'A');
+check('unparsed explicit gift emits required error code', malformedGift.productTruthValidation.errors.some(error => error.code === 'EXPLICIT_GIFT_NOT_PARSED'));
+check('Product Truth conflict blocks normal script generation', malformedPackage.generationBlocked && malformedPackage.metadata.generation_status === 'BLOCKED');
+check('blocked script gives a clear correction prompt', /แก้ Input|ยืนยันข้อมูล/.test(malformedPackage.mainSpokenScript));
+const duplicateTruth = core.parsePromotion('Jingi Tonic 1 ขวด ราคาโปร 999 บาท รับฟรี Jingi Tonic 1 ขวด', 0, readJson('data/dgmr-products.json'), core.LSG_ACCOUNTS.find(item => item.id === 'dgmr'), {});
+check('duplicate product and gift emits DUPLICATE_PRODUCT_GIFT', duplicateTruth.productTruthValidation.errors.some(error => error.code === 'DUPLICATE_PRODUCT_GIFT'));
+check('duplicate product and gift emits PRODUCT_GIFT_CONFLICT', duplicateTruth.productTruthValidation.errors.some(error => error.code === 'PRODUCT_GIFT_CONFLICT'));
+const mismatchTruth = core.validateProductTruth({ raw: 'A 2 ขวด', includedProducts: [{ name: 'A', count: 2 }], itemCount: 1, gift: null, promoPrice: 100, averagePrice: 100 });
+check('mismatched included count emits PRODUCT_COUNT_MISMATCH', mismatchTruth.errors.some(error => error.code === 'PRODUCT_COUNT_MISMATCH'));
+const unsafePriceTruth = core.validateProductTruth({ raw: 'A ราคาโปร 100', includedProducts: [], itemCount: 0, gift: null, promoPrice: 100, averagePrice: Number.NaN });
+check('unsafe average emits PRICE_PER_ITEM_UNSAFE', unsafePriceTruth.errors.some(error => error.code === 'PRICE_PER_ITEM_UNSAFE'));
+
 console.log('\n=== Script generation, compliance, and structure ===');
 const BANNED = ['ตะกร้าสีเหลือง', 'ครับ', 'ค่ะ', 'นะครับ', 'นะคะ', 'รักษา', 'หายขาด', 'Session 1', 'Session 2', 'Session 3'];
 const primaryById = Object.fromEntries(primaryAccounts.map(account => [account.id, account]));
@@ -210,6 +258,49 @@ const generatedAgain0 = pkg(firstPromo('skinoxy'), 'A', { hookVariant: 0 }).main
 const generatedAgain1 = pkg(firstPromo('skinoxy'), 'A', { hookVariant: 1 }).mainSpokenScript;
 check('Generate Again changes script wording', generatedAgain0 !== generatedAgain1);
 check('Generate Again keeps promo price', generatedAgain1.includes('239'));
+
+console.log('\n=== Content QA V2 regression ===');
+const QA_TIMES = { skinoxy: '09:30', 'skinoxy-shopee': '09:00', kmb: '11:00', 'kmb-shopee': '09:00', dgmr: '10:00' };
+const PRODUCER_PHRASES = ['จุดที่ควรจับ', 'จังหวะการพูด', 'เวลาช่วยเลือก ให้พูด', 'ระหว่างเล่าให้เว้นจังหวะ', 'เมื่อต้องพูดราคา', 'ย้ำอีกครั้งว่าราคา'];
+const TEMPLATE_ENGLISH = ['Mood', 'Routine', 'Character', 'Series'];
+const qaPackages = {};
+
+Object.keys(SMOKE_INPUTS).forEach(accountId => {
+  const promotion = parseSmoke(accountId);
+  qaPackages[accountId] = core.STRATEGIES.map(pattern => core.createScriptPackage(promotion, pattern, {
+    liveDate: '2026-08-04',
+    startTime: QA_TIMES[accountId],
+    assignment: manualAssignment(pattern)
+  }));
+  const scripts = qaPackages[accountId];
+  scripts.forEach(item => {
+    const text = item.mainSpokenScript;
+    check(`${accountId} ${item.metadata.assigned_pattern}: Product Accuracy validation is clean`, item.productTruth.validation.valid && !item.generationBlocked);
+    check(`${accountId} ${item.metadata.assigned_pattern}: no producer instruction leaks`, PRODUCER_PHRASES.every(phrase => !text.includes(phrase)));
+    check(`${accountId} ${item.metadata.assigned_pattern}: no template English`, TEMPLATE_ENGLISH.every(term => !new RegExp(`\\b${term}\\b`, 'i').test(text)));
+    check(`${accountId} ${item.metadata.assigned_pattern}: estimated speaking time 2.5-3.5 minutes`, item.estimatedSpeakingTime >= 2.5 && item.estimatedSpeakingTime <= 3.5, `${item.estimatedSpeakingTime}`);
+    check(`${accountId} ${item.metadata.assigned_pattern}: estimatedSpeakingTime metadata exists`, /นาที$/.test(item.metadata.estimatedSpeakingTime));
+    check(`${accountId} ${item.metadata.assigned_pattern}: no adjacent repeated CTA`, (text.match(/กดดูในตะกร้า|เข้าไปดูเซ็ตในตะกร้า/g) || []).length === 1);
+    check(`${accountId} ${item.metadata.assigned_pattern}: producer notes stay separate`, item.producerNotes.length > 0 && !text.includes(item.producerNotes[0]));
+  });
+  check(`${accountId}: A is longest and C is shortest`, scripts[0].mainSpokenScript.length > scripts[1].mainSpokenScript.length && scripts[1].mainSpokenScript.length > scripts[2].mainSpokenScript.length);
+});
+
+function shingleOverlap(a, b, size = 5){
+  const shingles = text => {
+    const words = text.split(/\s+/).filter(Boolean);
+    return new Set(words.slice(0, Math.max(0, words.length - size + 1)).map((_, index) => words.slice(index, index + size).join(' ')));
+  };
+  const left = shingles(a);
+  const right = shingles(b);
+  const common = [...left].filter(value => right.has(value)).length;
+  return common / Math.max(1, Math.min(left.size, right.size));
+}
+
+['A', 'B', 'C'].forEach((pattern, index) => {
+  check(`SKINOXY ${pattern}: TikTok and Shopee body overlap below 65%`, shingleOverlap(qaPackages.skinoxy[index].mainSpokenScript, qaPackages['skinoxy-shopee'][index].mainSpokenScript) < 0.65);
+  check(`KISS ${pattern}: TikTok and Shopee body overlap below 65%`, shingleOverlap(qaPackages.kmb[index].mainSpokenScript, qaPackages['kmb-shopee'][index].mainSpokenScript) < 0.65);
+});
 
 console.log('\n=== UI, OCR, copy, and responsive static checks ===');
 check('UI has account selector', indexHtml.includes('id="accountSelect"'));

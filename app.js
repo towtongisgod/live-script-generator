@@ -404,7 +404,10 @@ async function generateScripts(mode){
   state.currentMode = mode;
   render(promos, mode, assignment);
   const warningCount = state.lastPackages.filter(item => item.validationNotes.length).length;
-  setStatus(warningCount
+  const blockedCount = state.lastPackages.filter(item => item.generationBlocked).length;
+  setStatus(blockedCount
+    ? `Blocked: มี ${blockedCount} รายการที่ Product Truth ขัดแย้ง กรุณาแก้ Input หรือยืนยันข้อมูลก่อน`
+    : warningCount
     ? `Warning: Generated ${promos.length} โปรโมชั่น มี ${warningCount} รายการที่ข้อมูลต้องตรวจทาน`
     : `Generated: สร้างสคริปต์ ${promos.length} โปรโมชั่นสำหรับ ${brand.label} แล้ว`);
 }
@@ -444,6 +447,9 @@ function renderScriptCard(p, packageItem, mode){
     metadata: packageItem.metadata,
     productTruth: packageItem.productTruth,
     promotionSummary: packageItem.promotionSummary,
+    mainSpokenScript: packageItem.mainSpokenScript,
+    producerPushLine: packageItem.producerPushLine,
+    producerNotes: packageItem.producerNotes,
     validationNotes: packageItem.validationNotes
   }, null, 2);
 
@@ -478,8 +484,9 @@ function renderScriptCard(p, packageItem, mode){
     </div>
 
     <details class="supporting-copy">
-      <summary>Producer Push Line และ Validation Notes</summary>
+      <summary>Producer Push Line, Producer Notes และ Validation Notes</summary>
       <pre>${escapeHtml(packageItem.producerPushLine)}</pre>
+      <pre>${escapeHtml(packageItem.producerNotes.join('\n'))}</pre>
       <pre>${escapeHtml(packageItem.validationNotes.length ? packageItem.validationNotes.join('\n') : 'ไม่มี')}</pre>
     </details>
   `;
