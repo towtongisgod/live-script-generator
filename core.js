@@ -1,0 +1,1543 @@
+// core.js — pure parsing + script-generation logic (no DOM). Loaded via <script> in the
+// browser (before app.js, same global scope) AND via require() in tests/run-tests.js.
+// DOM/UI code (event listeners, render(), OCR/crop) stays in app.js — do not add DOM
+// access here, it must stay Node-testable.
+
+function normalizeText(text){
+  return String(text)
+    .replace(/\r/g, '')
+    .replace(/ /g, ' ')
+    .replace(/[ \t]+/g, ' ')
+    .replace(/\s+\n/g, '\n')
+    .trim();
+}
+
+function normalizeForMatch(text){
+  return String(text)
+    .toLowerCase()
+    .replace(/[&]/g, ' and ')
+    .replace(/\s+/g, ' ')
+    .trim();
+}
+
+function normalizeMoney(value){
+  if (!value) return null;
+  const number = Number(String(value).replace(/,/g, ''));
+  return Number.isFinite(number) ? number : null;
+}
+
+function formatMoney(value){
+  if (value === null || value === undefined || value === '') return '-';
+  return Number(value).toLocaleString('th-TH', {
+    minimumFractionDigits: Number.isInteger(value) ? 0 : 2,
+    maximumFractionDigits: 2
+  });
+}
+
+function formatPercent(value){
+  if (value === null || value === undefined) return '-';
+  return `${Number(value).toLocaleString('th-TH', {
+    minimumFractionDigits: 2,
+    maximumFractionDigits: 2
+  })}%`;
+}
+
+function moneyAfter(text, patterns){
+  for (const pattern of patterns){
+    const match = text.match(pattern);
+    if (match) return normalizeMoney(match[1]);
+  }
+  return null;
+}
+
+function extractQuantityTiers(text){
+  const matches = [...text.matchAll(/ซื้อ\s*(\d+)\s*([ก-๙a-z]+)?[^\n(]*?(?:เพียง|ราคา\S{0,10})\s*([\d,]+(?:\.\d+)?)[.\-]*\s*\(?\s*จากปกติ\s*([\d,]+(?:\.\d+)?)/gi)];
+  return matches.map(match => ({
+    quantity: Number(match[1]),
+    unit: match[2] || null,
+    promoPrice: normalizeMoney(match[3]),
+    regularPrice: normalizeMoney(match[4])
+  }));
+}
+
+function buildTierPriceSpeech(p){
+  if (!p.quantityTiers || p.quantityTiers.length < 2) return '';
+
+  const lines = p.quantityTiers.map(tier =>
+    `ซื้อ ${tier.quantity} ${tier.unit || 'ชุด'} ${formatMoney(tier.promoPrice)} บาท จากราคาปกติ ${formatMoney(tier.regularPrice)} บาท`
+  );
+  return `${lines.join(' ส่วน ')} ยิ่งซื้อเยอะยิ่งคุ้ม`;
+}
+
+function extractCoupon(text){
+  const match = text.match(/คูปอง(?:ลดเพิ่ม)?\s*([\d.]+)\s*%/i);
+  return match ? Number(match[1]) : null;
+}
+
+function extractFinalPrice(text){
+  const patterns = [
+    /Final(?:\s*Price)?[\s\S]{0,120}?เหลือ(?:เพียง)?\s*([\d,]+(?:\.\d+)?)/i,
+    /คูปอง(?:ลดเพิ่ม)?\s*[\d.]+\s*%[\s\S]{0,60}?เหลือ(?:เพียง)?\s*([\d,]+(?:\.\d+)?)/i,
+    /เหลือเพียง\s*([\d,]+(?:\.\d+)?)/i
+  ];
+  return moneyAfter(text, patterns);
+}
+
+function extractPrePriceText(text){
+  const match = text.match(/^([\s\S]*?)(?=\s*(?:ราคาปกติ|จากปกติ|Full\s*Price|ราคาโปร|ราคาพิเศษ|ในราคา|Price\s*:|Final|คูปอง|เหลือ(?:เพียง)?|จำนวน\s*จำกัด|>>|https?:\/\/|\n\s*\n|$))/i);
+  return String(match ? match[1] : text).trim();
+}
+
+function extractGift(text, knowledge){
+  const stopWords = 'มูลค่า|ราคาปกติ|จากปกติ|ราคาโปร|ราคาพิเศษ|ในราคา|Price\\s*:|Final|คูปอง|เหลือ(?:เพียง)?|จำนวน\\s*จำกัด|>>|https?:\\/\\/|\\n\\s*[*\\-•]|\\n\\s*\\n|$';
+  const receiveFree = text.match(new RegExp(`รับฟรี\\s*([\\s\\S]*?)(?=\\s*(?:${stopWords}))`, 'i'));
+  if (receiveFree) return cleanupPhrase(receiveFree[1]);
+
+  const explicitGift = text.match(new RegExp(`(?:ของแถม|แถม)\\s*([\\s\\S]*?)(?=\\s*(?:${stopWords}))`, 'i'));
+  if (explicitGift) return cleanupPhrase(explicitGift[1]);
+
+  // Bare "ฟรี X" (no "รับ" or "แถม" in front) — another common real-world phrasing.
+  const bareFree = text.match(new RegExp(`(?<!รับ)ฟรี\\s*([\\s\\S]*?)(?=\\s*(?:${stopWords}))`, 'i'));
+  if (bareFree && bareFree[1]) return cleanupPhrase(bareFree[1]);
+
+  if ((knowledge?.brand_id || '').toLowerCase() === 'kmb') return null;
+
+  const plusGift = text.match(new RegExp(`\\+\\s*(?!คูปอง)([\\s\\S]*?)(?=\\s*(?:${stopWords}))`, 'i'));
+  if (plusGift) return cleanupPhrase(plusGift[1]);
+
+  return null;
+}
+
+function extractPromotionTitle(prePriceText){
+  const lines = String(prePriceText || '')
+    .split('\n')
+    .map(line => cleanupPhrase(line.replace(/^\+\s*/, '')))
+    .filter(Boolean);
+  return lines[0] || null;
+}
+
+function extractProductLines(prePriceText){
+  const lines = String(prePriceText || '')
+    .split('\n')
+    .map(line => cleanupPhrase(line.replace(/^\+\s*/, '')))
+    .filter(Boolean);
+
+  if (lines.length <= 1) return lines;
+  return lines.slice(1);
+}
+
+function extractQuantity(text){
+  const match = text.match(/(\d+(?:\.\d+)?)\s*(กระปุก|หลอด|ขวด|ซอง|ใบ|แผ่น|ชิ้น|แพ็ก|แพค|ชุด|กล่อง)/i);
+  return match ? `${match[1]} ${match[2]}` : null;
+}
+
+function extractGiftCount(gift){
+  if (!gift) return 0;
+  const match = gift.match(/(\d+(?:\.\d+)?)\s*(?:ชิ้น|ขวด|หลอด|กระปุก|ซอง|ใบ|แผ่น|แพ็ก|แพค|ชุด|กล่อง)/i);
+  return match ? Number(match[1]) : 1;
+}
+
+function extractItemCount(rawText, mainProductText, matchedProducts = [], knowledge = null){
+  if ((knowledge?.brand_id || '').toLowerCase() === 'dgmr') {
+    const dgmrCount = extractDgmrMainItemCount(rawText);
+    if (dgmrCount) return dgmrCount;
+  }
+
+  const text = mainProductText || rawText;
+  const direct = text.match(/(\d+(?:\.\d+)?)\s*(?:ชิ้น|ตัว|หลอด|ขวด|กระปุก|ซอง|ชุด|กล่อง)/i);
+  if (direct) return Number(direct[1]);
+  if (/เซตคู่|คู่/i.test(text)) return 2;
+
+  const uniqueProductIds = new Set((matchedProducts || []).map(item => item.product?.id).filter(Boolean));
+  return uniqueProductIds.size || null;
+}
+
+function extractDgmrMainItemCount(text){
+  const mainText = String(text || '').split(/รับฟรี|ของแถม|แถม/i)[0];
+  const roles = [
+    /(?:แชมพู|shampoo)\s*(\d+(?:\.\d+)?)?/i,
+    /(?:ครีมนวด|conditioner)\s*(\d+(?:\.\d+)?)?/i,
+    /(?:hair\s*tonic|โทนิค)\s*(\d+(?:\.\d+)?)?/i,
+    /(?:hair\s*pack|ทรีตเมนต์|treatment)\s*(\d+(?:\.\d+)?)?/i
+  ];
+
+  const count = roles.reduce((sum, pattern) => {
+    const match = mainText.match(pattern);
+    return match ? sum + Number(match[1] || 1) : sum;
+  }, 0);
+
+  return count || null;
+}
+
+function cleanupPhrase(text){
+  const cleaned = String(text || '')
+    .replace(/\s+/g, ' ')
+    .replace(/\s*[+|,]\s*$/g, '')
+    .replace(/\s*[-–—]\s*$/g, '')
+    .trim();
+
+  return cleaned || null;
+}
+
+function getProductTerms(product){
+  return [product.name, ...(product.aliases || [])].filter(Boolean);
+}
+
+function getVariantTerms(variant){
+  const splitTerms = String(variant.name || '')
+    .split(/\s+/)
+    .filter(term => {
+      const normalized = normalizeForMatch(term);
+      return normalized.length > 2 && !['pro', 'sweet', 'and', 'the', 'edt'].includes(normalized);
+    });
+
+  return [
+    variant.id,
+    variant.name,
+    variant.color,
+    ...(variant.aliases || []),
+    ...splitTerms
+  ].filter(term => term && String(term).length > 1);
+}
+
+function findProduct(text, products){
+  const haystack = normalizeForMatch(text);
+
+  return products
+    .map(product => {
+      const matchedTerm = getProductTerms(product)
+        .sort((a, b) => b.length - a.length)
+        .find(term => haystack.includes(normalizeForMatch(term)));
+
+      const matchedVariant = (product.variants || [])
+        .flatMap(getVariantTerms)
+        .sort((a, b) => b.length - a.length)
+        .find(term => haystack.includes(normalizeForMatch(term)));
+
+      const score = Math.max(
+        matchedTerm ? normalizeForMatch(matchedTerm).length : 0,
+        matchedVariant ? normalizeForMatch(matchedVariant).length : 0
+      );
+
+      return score ? { product, score } : null;
+    })
+    .filter(Boolean)
+    .sort((a, b) => b.score - a.score)[0]?.product || null;
+}
+
+function findProducts(text, products){
+  const haystack = normalizeForMatch(text);
+
+  return products
+    .map(product => {
+      const productMatch = getProductTerms(product).find(term =>
+        haystack.includes(normalizeForMatch(term))
+      );
+      const matchedVariants = (product.variants || []).filter(variant =>
+        getVariantTerms(variant).some(term => haystack.includes(normalizeForMatch(term)))
+      );
+
+      if (!productMatch && !matchedVariants.length) return null;
+      return { product, productMatch, matchedVariants };
+    })
+    .filter(Boolean);
+}
+
+function resolveVariants(searchText, product){
+  if (!product?.variants?.length) {
+    return {
+      selectedVariants: [],
+      allVariantsSelected: false,
+      variantNote: 'ยังไม่มีข้อมูลสูตรหรือสีสำหรับสินค้านี้'
+    };
+  }
+
+  const haystack = normalizeForMatch(searchText);
+  const selectedVariants = product.variants.filter(variant =>
+    getVariantTerms(variant).some(term => haystack.includes(normalizeForMatch(term)))
+  );
+
+  if (selectedVariants.length) {
+    return {
+      selectedVariants,
+      allVariantsSelected: false,
+      variantNote: `ระบุสูตร/สี: ${formatVariantList(selectedVariants)}`
+    };
+  }
+
+  return {
+    selectedVariants: product.variants,
+    allVariantsSelected: true,
+    variantNote: product.variant_rule || 'เลือกได้ทุกสูตรที่ร่วมรายการ'
+  };
+}
+
+function findSelectedFragranceVariants(text, knowledge){
+  const fragranceProduct = (knowledge?.products || []).find(product =>
+    ['Fragrance', 'Intense Fragrance'].includes(product.category) || product.id === 'edt_revamp'
+  );
+  if (!fragranceProduct) return [];
+
+  const haystack = normalizeForMatch(text);
+  return (fragranceProduct.variants || []).filter(variant =>
+    getVariantTerms(variant).some(term => haystack.includes(normalizeForMatch(term)))
+  );
+}
+
+function formatVariantList(variants){
+  return variants.map(variant =>
+    [variant.name, variant.color].filter(Boolean).join(' ')
+  ).join(', ');
+}
+
+function formatVariantGuidance(p){
+  if (!p.product) return 'ยังไม่มีข้อมูลสูตรสำหรับสินค้านี้';
+
+  const prefix = p.allVariantsSelected
+    ? 'ไม่ระบุสูตรหรือสีในโปร ตีความว่าเลือกได้ทุกสูตรที่ร่วมรายการ'
+    : 'สูตรหรือสีที่ระบุในโปร';
+
+  return `${prefix}: ${formatVariantList(p.selectedVariants)}`;
+}
+
+function getFinalPriceWarning(explicitFinalPrice, promoPrice, coupon){
+  if (!explicitFinalPrice || !promoPrice || !coupon) return null;
+  const calculated = Math.round(promoPrice * (1 - coupon / 100));
+  if (Math.abs(explicitFinalPrice - calculated) <= 1) return null;
+  return `Final Price จากข้อมูลคือ ${formatMoney(explicitFinalPrice)} บาท แต่คำนวณจากราคาโปรและคูปองได้ ${formatMoney(calculated)} บาท`;
+}
+
+function detectPromotionType(text, knowledge, matchedProducts, selectedFragrances, gift, itemCount = null){
+  const brandId = (knowledge?.brand_id || '').toLowerCase();
+  if (brandId === 'dgmr') {
+    return detectDgmrPromotionType(text, knowledge, gift, itemCount);
+  }
+
+  if (brandId !== 'kmb') {
+    return { id: 'skinoxy_promotion', name: 'SKINOXY Promotion', selling_angle: 'เลือกสูตรตามปัญหาผิวและความคุ้มของโปร' };
+  }
+
+  const haystack = normalizeForMatch(text);
+  const hasEdt = /edt|perfume|fragrance|น้ำหอม/i.test(text) || selectedFragrances.length > 0;
+  const hasUnderarm = /underarm|dry serum|ใต้วงแขน/i.test(text) || hasProductId(matchedProducts, 'underarm_dry_serum');
+  const hasShower = /shower|เจลอาบน้ำ/i.test(text) || hasProductId(matchedProducts, 'perfume_shower_gel');
+  const hasLotion = /lotion|โลชั่น/i.test(text) || hasProductId(matchedProducts, 'body_lotion_revamp');
+  const fragranceNames = (knowledge.products || [])
+    .flatMap(product => product.variants || [])
+    .filter(variant => ['Fragrance', 'Intense Fragrance'].includes(variant.category))
+    .filter(variant => getVariantTerms(variant).some(term => haystack.includes(normalizeForMatch(term))));
+  const typeMap = Object.fromEntries((knowledge.promotion_types || []).map(type => [type.id, type]));
+
+  if (hasEdt && hasUnderarm) return typeMap.confidence_set;
+  if (hasShower && hasLotion && hasEdt) return typeMap.fragrance_layering_set;
+  if (fragranceNames.length >= 2 || /hair mist/i.test(text)) return typeMap.fragrance_duo;
+  if (/intense|nude|luxury/i.test(text) && (gift || hasLotion || hasShower)) return typeMap.luxury_lifestyle_set;
+  if (hasEdt) return typeMap.single_fragrance;
+
+  return { id: 'kmb_lifestyle_set', name: 'Lifestyle Set', selling_angle: 'เลือกตาม Mood, Character และ Lifestyle' };
+}
+
+function detectDgmrPromotionType(text, knowledge, gift, itemCount){
+  const typeMap = Object.fromEntries((knowledge.promotion_types || []).map(type => [type.id, type]));
+  const hasGift = Boolean(gift);
+  const hasShampoo = /แชมพู|shampoo/i.test(text);
+  const hasConditioner = /ครีมนวด|conditioner/i.test(text);
+  const hasHairTonic = /hair\s*tonic|โทนิค/i.test(text);
+  const hasHairPack = /hair\s*pack|ทรีตเมนต์|treatment/i.test(text);
+  const hasDlaesoo = /dlaesoo|ดาเลซู/i.test(text);
+  const shampooCount = countDgmrRole(text, /(?:แชมพู|shampoo)\s*(\d+(?:\.\d+)?)?/i);
+
+  let base = typeMap.daily_hair_care_set;
+  if (hasDlaesoo && hasShampoo && hasConditioner && hasHairPack) {
+    base = typeMap.damage_recovery_set;
+  } else if (hasShampoo && hasConditioner && hasHairTonic) {
+    base = typeMap.hair_fall_complete_set;
+  } else if (shampooCount >= 2 || (/หลายขวด|ใช้ต่อเนื่อง/i.test(text) && itemCount >= 2)) {
+    base = typeMap.stock_up_set;
+  } else if (hasShampoo && hasHairTonic) {
+    base = typeMap.scalp_care_set;
+  } else if (hasShampoo && hasConditioner) {
+    base = typeMap.daily_hair_care_set;
+  } else if (hasGift) {
+    base = typeMap.gift_bundle;
+  }
+
+  if (hasGift && base?.id !== 'gift_bundle') {
+    const giftBundle = typeMap.gift_bundle;
+    return {
+      id: `${base.id}_gift_bundle`,
+      name: `${base.name} + ${giftBundle.name}`,
+      selling_angle: `${base.selling_angle} | ${giftBundle.selling_angle}`
+    };
+  }
+
+  return base || {
+    id: 'dgmr_hair_care_set',
+    name: 'Hair Care Set',
+    selling_angle: 'เลือก Routine ตามปัญหาผมและหนังศีรษะ'
+  };
+}
+
+function countDgmrRole(text, pattern){
+  const match = String(text || '').split(/รับฟรี|ของแถม|แถม/i)[0].match(pattern);
+  return match ? Number(match[1] || 1) : 0;
+}
+
+function hasProductId(matchedProducts, id){
+  return (matchedProducts || []).some(item => item.product?.id === id);
+}
+
+function formatPriceLines(p){
+  return [
+    p.regular ? `ราคาปกติ ${formatMoney(p.regular)} บาท` : '',
+    p.promoPrice ? `ราคาโปร ${formatMoney(p.promoPrice)} บาท` : '',
+    p.coupon ? `คูปองลดเพิ่ม ${p.coupon}%` : '',
+    p.finalPrice ? `${p.finalPriceSource === 'calculated' ? 'Final Price คำนวณจากคูปอง' : 'Final Price'} ${formatMoney(p.finalPrice)} บาท` : ''
+  ].filter(Boolean);
+}
+
+function formatGiftLine(p){
+  if (!p.gift) return 'ไม่มีข้อมูลของแถม';
+  const value = p.giftValue ? ` มูลค่า ${formatMoney(p.giftValue)} บาท` : '';
+  return `${p.gift}${value}`;
+}
+
+function formatDiscountLine(p){
+  if (!p.discount) return 'ไม่มีข้อมูลส่วนลด';
+  return `ลด ${formatMoney(p.discount)} บาท หรือประมาณ ${formatPercent(p.discountPercent)}`;
+}
+
+function formatAverageLine(p){
+  if (!p.averagePrice) return 'ไม่มีข้อมูลราคาเฉลี่ยต่อชิ้น';
+  return `เฉลี่ยชิ้นละ ${formatMoney(p.averagePrice)} บาท`;
+}
+
+function formatAverageIncludingGiftLine(p){
+  if (!p.averageIncludingGift) return 'ไม่มีข้อมูลราคาเฉลี่ยเมื่อรวมของแถม';
+  return `เฉลี่ยเมื่อรวมของแถม ${formatMoney(p.averageIncludingGift)} บาทต่อชิ้น`;
+}
+
+function getPrimaryFragrance(p){
+  return p.selectedFragrances[0] || p.selectedVariants.find(item =>
+    ['Fragrance', 'Intense Fragrance'].includes(item.category)
+  ) || null;
+}
+
+function formatMood(variant){
+  return (variant?.mood || []).slice(0, 3).join(', ') || 'เลือกตาม Mood ที่ชอบ';
+}
+
+function formatOccasion(variant){
+  return (variant?.occasion || []).slice(0, 3).join(', ') || 'ใช้ได้หลายโอกาส';
+}
+
+function formatItemsInSet(p){
+  if (p.brandId === 'dgmr') {
+    const mainText = String(p.raw || '')
+      .split(/รับฟรี|ของแถม|แถม|ราคาปกติ|จากปกติ|ราคาพิเศษ|ราคาโปร|ในราคา|>>|https?:\/\/|\n\s*\n/i)[0]
+      .split('\n')
+      .map(line => cleanupPhrase(line.replace(/^\+\s*/, '')))
+      .filter(Boolean)
+      .join(' | ');
+    if (mainText) return mainText;
+  }
+
+  if (p.productLines?.length) return p.productLines.join(' | ');
+
+  const productLabels = (p.matchedProducts || []).map(item => {
+    const variants = item.matchedVariants?.length ? ` ${formatVariantList(item.matchedVariants)}` : '';
+    return `${item.product.name}${variants}`;
+  });
+
+  return productLabels.join(' | ') || p.mainProductText || '-';
+}
+
+// Same facts as formatItemsInSet, but joined with natural Thai instead of a
+// literal "|" pipe — use this inside spoken Session lines, keep
+// formatItemsInSet (pipes OK) for the reference header/meta card only.
+function formatItemsForSpeech(p){
+  return formatItemsInSet(p).split(' | ').filter(Boolean).join(' และ ');
+}
+
+function joinSentences(lines){
+  return lines.filter(Boolean).join(' ');
+}
+
+function uniqueFilled(items){
+  return [...new Set((items || [])
+    .flat()
+    .map(item => String(item || '').trim())
+    .filter(Boolean))];
+}
+
+function listForSpeech(items, fallback = ''){
+  const values = uniqueFilled(items);
+  if (!values.length) return fallback;
+  if (values.length === 1) return values[0];
+  if (values.length === 2) return `${values[0]} และ ${values[1]}`;
+  return `${values.slice(0, -1).join(', ')} และ ${values[values.length - 1]}`;
+}
+
+function getBrandCharacter(p){
+  const defaults = {
+    skinoxy: {
+      positioning: 'Problem-Solution Body Care',
+      pain_point_lens: 'เริ่มจากปัญหาผิว แล้วพาเลือกสูตรที่ตรงกับปัญหา',
+      mc_tone: 'ชัด ตรงสูตร ไม่พูดเกินข้อมูล'
+    },
+    kmb: {
+      positioning: 'Lifestyle Fragrance Brand',
+      pain_point_lens: 'เริ่มจาก Mood, Character และโอกาสใช้งาน',
+      mc_tone: 'สนุก มีภาพจำ และไม่พูด Claim เกินข้อมูล'
+    },
+    dgmr: {
+      positioning: 'Hair Care Routine Brand',
+      pain_point_lens: 'เริ่มจาก Hair Concern แล้วพาเลือก Routine ที่ตรงกับปัญหา',
+      mc_tone: 'จริงจัง เข้าใจปัญหา และไม่ฟันธงผลลัพธ์'
+    }
+  };
+
+  return {
+    ...(defaults[p.brandId] || defaults.skinoxy),
+    ...(p.knowledge?.brand_character || {})
+  };
+}
+
+function buildSession(number, title, lines){
+  return `### Session ${number}: ${title} (2-3 นาที)\n${joinSentences(lines)}`;
+}
+
+function buildPriceSpeech(p, promoLabel = 'ราคาโปร'){
+  const parts = [];
+  if (p.regular) parts.push(`จากราคาปกติ ${formatMoney(p.regular)} บาท`);
+  if (p.promoPrice) parts.push(`${promoLabel} ${formatMoney(p.promoPrice)} บาท`);
+  if (p.discount) parts.push(`ประหยัดไป ${formatMoney(p.discount)} บาท หรือประมาณ ${formatPercent(p.discountPercent)}`);
+  if (p.coupon) parts.push(`ถ้าใช้คูปองลดเพิ่ม ${p.coupon}%`);
+  if (p.finalPrice) parts.push(`ราคาสุทธิอยู่ที่ ${formatMoney(p.finalPrice)} บาท`);
+  return parts.join(' ');
+}
+
+function splitPromotions(raw){
+  const normalized = raw
+    .replace(/\r/g, '')
+    .replace(/ /g, ' ')
+    .trim();
+
+  const numberedMatches = [
+    ...normalized.matchAll(/(?:^|\n)\s*(?:\d+|[๐-๙]+)[\.\)]\s+/g)
+  ];
+
+  if (numberedMatches.length > 1) {
+    return numberedMatches.map((match, index) => {
+      const start = match.index + match[0].length;
+      const end = index + 1 < numberedMatches.length
+        ? numberedMatches[index + 1].index
+        : normalized.length;
+      return normalized.slice(start, end).trim();
+    }).filter(Boolean);
+  }
+
+  // A single promotion's own caption often has blank lines between its intro,
+  // bullet list, and gift line (Shopee/Facebook style). Only treat a blank-line
+  // gap as a NEW promotion when the text actually mentions more than one
+  // "regular price" — that's the one fact every real promotion states once.
+  const regularPriceMentions = (normalized.match(/ราคาปกติ|จากปกติ|Full\s*Price/gi) || []).length;
+  if (regularPriceMentions <= 1) {
+    return [normalized];
+  }
+
+  return normalized
+    .split(/\n{2,}|(?:^|\n)\s*[-•]\s+/)
+    .map(item => item.trim())
+    .filter(Boolean);
+}
+
+function parsePromotion(text, index, knowledge, brand = null, style = null){
+  const cleaned = normalizeText(text);
+  const prePriceText = extractPrePriceText(cleaned);
+  const mainProductText = cleanupPhrase(prePriceText) || cleaned;
+  const quantityTiers = extractQuantityTiers(cleaned);
+  const regular = moneyAfter(cleaned, [
+    /ราคาปกติ[^\d\n]{0,10}([\d,]+(?:\.\d+)?)/i,
+    /จากปกติ[^\d\n]{0,10}([\d,]+(?:\.\d+)?)/i,
+    /Full\s*Price\s*:?\s*([\d,]+(?:\.\d+)?)/i
+  ]) || quantityTiers[0]?.regularPrice || null;
+  const promoPrice = moneyAfter(cleaned, [
+    /ราคาพิเศษ[^\d\n]{0,10}([\d,]+(?:\.\d+)?)/i,
+    /ราคาโปร[^\d\n]{0,10}([\d,]+(?:\.\d+)?)/i,
+    /ในราคา[^\d\n]{0,15}([\d,]+(?:\.\d+)?)/i,
+    /พิเศษ\s*([\d,]+(?:\.\d+)?)(?!\s*(?:ml|มล\.?|กรัม|g|oz|ขวด|ชิ้น|kg|ก\.?|ลิตร))/i,
+    /Price\s*:?\s*([\d,]+(?:\.\d+)?)/i,
+    /เพียง\s*([\d,]+(?:\.\d+)?)/i
+  ]) || quantityTiers[0]?.promoPrice || null;
+  const coupon = extractCoupon(cleaned);
+  const explicitFinalPrice = extractFinalPrice(cleaned);
+  const calculatedFinalPrice = !explicitFinalPrice && promoPrice && coupon
+    ? Math.round(promoPrice * (1 - coupon / 100))
+    : null;
+  const finalPrice = explicitFinalPrice || calculatedFinalPrice;
+  const gift = extractGift(cleaned, knowledge);
+  const giftValue = moneyAfter(cleaned, [/มูลค่า\s*([\d,]+(?:\.\d+)?)/i]);
+  const giftCount = extractGiftCount(gift);
+  const limited = /จำนวน\s*จำกัด|limited/i.test(cleaned);
+  const matchedProducts = findProducts(cleaned, knowledge?.products || []);
+  const matchedProduct = findProduct(mainProductText, knowledge?.products || [])
+    || matchedProducts[0]?.product
+    || null;
+  const variantInfo = resolveVariants(cleaned, matchedProduct);
+  const selectedFragrances = findSelectedFragranceVariants(cleaned, knowledge);
+  const title = extractPromotionTitle(prePriceText);
+  const productLines = extractProductLines(prePriceText);
+  const itemCount = extractItemCount(cleaned, mainProductText, matchedProducts, knowledge);
+  const totalCount = itemCount ? itemCount + giftCount : giftCount || null;
+  const quantity = extractQuantity(mainProductText);
+  const discount = regular && promoPrice ? regular - promoPrice : null;
+  const discountPercent = regular && discount ? (discount / regular) * 100 : null;
+  const averagePrice = promoPrice && itemCount ? promoPrice / itemCount : null;
+  const averageIncludingGift = promoPrice && totalCount ? promoPrice / totalCount : null;
+  const promotionType = detectPromotionType(cleaned, knowledge, matchedProducts, selectedFragrances, gift, itemCount);
+  const sellingAngle = promotionType.selling_angle;
+  const warning = getFinalPriceWarning(explicitFinalPrice, promoPrice, coupon);
+
+  return {
+    index: index + 1,
+    brandId: knowledge?.brand_id || brand?.id || 'skinoxy',
+    brandName: knowledge?.brand || brand?.label || 'SKINOXY',
+    brandShort: knowledge?.brand_short || brand?.label || knowledge?.brand || 'SKINOXY',
+    brand,
+    style,
+    knowledge,
+    raw: text.trim(),
+    title,
+    productLines,
+    mainProductText,
+    quantity,
+    itemCount,
+    product: matchedProduct,
+    matchedProducts,
+    selectedVariants: variantInfo.selectedVariants,
+    allVariantsSelected: variantInfo.allVariantsSelected,
+    variantNote: variantInfo.variantNote,
+    selectedFragrances,
+    gift,
+    giftValue,
+    giftCount,
+    regular,
+    promoPrice,
+    quantityTiers,
+    coupon,
+    finalPrice,
+    finalPriceSource: explicitFinalPrice ? 'explicit' : calculatedFinalPrice ? 'calculated' : null,
+    discount,
+    discountPercent,
+    averagePrice,
+    totalCount,
+    averageIncludingGift,
+    promotionType,
+    sellingAngle,
+    limited,
+    warning,
+    hookVariants: { advisor: 0, bestie: 0, closer: 0 }
+  };
+}
+
+// ---------------------------------------------------------------------------
+// Product Truth — the facts every Selling Strategy must state identically.
+// Strategies read this (and `p` directly) but must never invent, add, or
+// change any of these values.
+// ---------------------------------------------------------------------------
+function buildProductTruth(p){
+  return {
+    brandId: p.brandId,
+    brandName: p.brandName,
+    title: p.title,
+    mainProductText: p.mainProductText,
+    items: formatItemsInSet(p),
+    productId: p.product ? p.product.id : null,
+    productName: p.product ? p.product.name : null,
+    selectedVariantIds: (p.selectedVariants || []).map(v => v.id).filter(Boolean),
+    allVariantsSelected: p.allVariantsSelected,
+    regular: p.regular,
+    promoPrice: p.promoPrice,
+    coupon: p.coupon,
+    finalPrice: p.finalPrice,
+    discount: p.discount,
+    discountPercent: p.discountPercent,
+    quantityTiers: p.quantityTiers,
+    gift: p.gift,
+    giftValue: p.giftValue,
+    giftCount: p.giftCount,
+    itemCount: p.itemCount,
+    totalCount: p.totalCount,
+    limited: p.limited,
+    promotionTypeId: p.promotionType?.id || null
+  };
+}
+
+// ---------------------------------------------------------------------------
+// Selling Strategy meta (used by app.js to label the UI — not spoken text)
+// ---------------------------------------------------------------------------
+const STRATEGIES = ['advisor', 'bestie', 'closer'];
+
+const STRATEGY_META = {
+  advisor: {
+    letter: 'A',
+    name: 'Advisor',
+    thai: 'ที่ปรึกษา / แก้ปัญหา',
+    description: 'ขายผ่านการช่วยวิเคราะห์ปัญหาและแนะนำสินค้าให้เหมาะกับลูกค้า'
+  },
+  bestie: {
+    letter: 'B',
+    name: 'Bestie',
+    thai: 'เพื่อนแนะนำเพื่อน',
+    description: 'ขายผ่านภาพชีวิตประจำวัน ความรู้สึก และประสบการณ์แบบเพื่อนคุยกัน'
+  },
+  closer: {
+    letter: 'C',
+    name: 'Closer',
+    thai: 'ปิดการขาย',
+    description: 'ขายผ่านความคุ้ม ราคา และเหตุผลให้ตัดสินใจซื้อตอนนี้'
+  }
+};
+
+// ---------------------------------------------------------------------------
+// SKINOXY — shared fact-speech helpers (strategy-agnostic; reused by all 3)
+// ---------------------------------------------------------------------------
+function buildSkinoxyChoiceSpeech(p){
+  if (!p.product) return 'โปรนี้ยังไม่มีรายละเอียดตัวสินค้าเพิ่มเติม เช็กรายละเอียดจริงในตะกร้าเป็นหลักได้เลย';
+
+  if (p.allVariantsSelected) {
+    const choices = p.selectedVariants.map(variant => {
+      const pain = (variant.pain_points || []).slice(0, 2).join(' หรือ ');
+      const benefit = (variant.benefits || []).slice(0, 2).join(' และ ');
+      const label = [variant.name, variant.color].filter(Boolean).join(' ');
+      return `ถ้าเจอ ${pain || 'ปัญหาผิวที่ระบุในตะกร้า'} ตัวที่ตอบโจทย์คือ ${label}${benefit ? ` ${benefit}` : ''}`;
+    }).join(' ');
+    return `โปรนี้ไม่ได้ล็อกสูตรไว้ เลือกได้ทุกสูตรที่ร่วมรายการเลย ${choices}`;
+  }
+
+  return `โปรนี้ระบุสูตรไว้แล้ว คือ ${formatVariantList(p.selectedVariants)} วันนี้โฟกัสเฉพาะสูตรนี้`;
+}
+
+function getSkinoxyPainPoints(p){
+  const variants = (p.selectedVariants?.length ? p.selectedVariants : p.product?.variants) || [];
+  return uniqueFilled(variants.flatMap(variant => variant.pain_points || []));
+}
+
+function getSkinoxyBenefits(p){
+  const variants = (p.selectedVariants?.length ? p.selectedVariants : p.product?.variants) || [];
+  return uniqueFilled(variants.flatMap(variant => variant.benefits || []));
+}
+
+function buildSkinoxyPainPointSpeech(p){
+  const character = getBrandCharacter(p);
+  const pains = getSkinoxyPainPoints(p).slice(0, 5);
+  const benefits = getSkinoxyBenefits(p).slice(0, 4);
+  if (!p.product) {
+    return `${character.pain_point_lens} โปรนี้ยังไม่มีรายละเอียดตัวสินค้าเพิ่มเติม ขอเล่าจากราคา ของแถม และรายละเอียดที่อยู่ในตะกร้าเป็นหลัก`;
+  }
+
+  return `ถ้ากำลังเจอปัญหาแบบ ${listForSpeech(pains, 'ปัญหาผิวที่ระบุในตะกร้า')} ลองเทียบกับผิวตัวเองดูก่อน แล้วมาดูโปรนี้ในกลุ่ม ${p.product.name} ที่ช่วยได้เรื่อง ${listForSpeech(benefits, 'เลือกสูตรตามข้อมูลสินค้า')}`;
+}
+
+function skinoxyPriceSpeech(p){
+  const tierSpeech = buildTierPriceSpeech(p);
+  return tierSpeech || buildPriceSpeech(p, 'ราคาโปร');
+}
+
+function skinoxyGiftSpeech(p){
+  return p.gift ? `แถมด้วย ${formatGiftLine(p)}` : '';
+}
+
+function skinoxySummaryHeader(p, strategyKey){
+  const character = getBrandCharacter(p);
+  const meta = STRATEGY_META[strategyKey];
+  return `# สรุปโปรโมชั่น
+แบรนด์: ${p.brandName}
+Strategy: ${meta.name} (${meta.thai})
+สินค้า: ${p.mainProductText || '-'}
+Brand Character: ${character.positioning}
+สูตร/สี: ${formatVariantGuidance(p)}
+ราคา: ${formatPriceLines(p).join(', ') || 'ไม่มีข้อมูลราคา'}
+ของแถม: ${formatGiftLine(p)}
+จำนวนจำกัด: ${p.limited ? 'ระบุจำนวนจำกัด' : 'ไม่ระบุ'}`;
+}
+
+// --- SKINOXY hook libraries (3 per strategy) ---
+function skinoxyAdvisorHooks(p){
+  const pains = getSkinoxyPainPoints(p).slice(0, 4);
+  return [
+    'เคยรู้สึกไหมว่าดูแลผิวสม่ำเสมออยู่แล้ว แต่ผิวก็ยังไม่ดีขึ้นเท่าที่ควร บางทีปัญหาอาจไม่ได้อยู่ที่ความขยัน แต่อยู่ที่สูตรที่เลือกไม่ตรงจุด',
+    `ถ้ากำลังเจอปัญหาผิวแบบ ${listForSpeech(pains, 'ผิวที่ไม่ค่อยเป็นใจ')} อยู่ตอนนี้ ลองมาเช็กกันว่าโปร ${p.mainProductText || 'ตัวนี้'} ตอบโจทย์ตรงไหนได้บ้าง`,
+    'หลายคนเลือกบอดี้แคร์หรือสกินแคร์จากชื่อหรือสีแพ็กเกจ แต่การเลือกจากปัญหาผิวตัวเองจะตรงจุดกว่ามาก วันนี้เลยอยากพามาเช็กกันทีละขั้น'
+  ];
+}
+
+function skinoxyBestieHooks(p){
+  return [
+    'วันไหนที่อยากรู้สึกผิวดีขึ้นแบบไม่ต้องทำอะไรเยอะ ลองมีโปรนี้ติดห้องน้ำไว้ดูสิ',
+    'จำความรู้สึกตอนอาบน้ำเสร็จแล้วผิวนุ่มจนอยากลูบตัวเองได้ไหม โปรนี้พาไปถึงจุดนั้นได้ง่ายๆ',
+    'ถ้าเป็นคนที่ชอบดูแลตัวเองแต่ไม่อยากมีขั้นตอนเยอะ โปรนี้เหมาะกับไลฟ์สไตล์แบบนั้นเลย'
+  ];
+}
+
+function skinoxyCloserHooks(p){
+  const priceSpeech = skinoxyPriceSpeech(p);
+  return [
+    priceSpeech ? `โปรนี้ ${priceSpeech} ถูกกว่าซื้อปกติชัดเจน` : `โปรนี้ ${p.mainProductText || 'ตัวนี้'} จัดราคามาคุ้มกว่าปกติ`,
+    `เซตนี้ได้ ${p.mainProductText || 'สินค้าในโปรนี้'} ครบในราคาเดียว ไม่ต้องซื้อแยกให้แพงกว่าเดิม`,
+    'ถ้ากำลังเทียบราคาสกินแคร์อยู่ โปรนี้คุ้มกว่าซื้อแยกแน่นอน มาดูตัวเลขกัน'
+  ];
+}
+
+function buildSkinoxyAdvisorScript(p, hookVariant = 0){
+  const pains = getSkinoxyPainPoints(p).slice(0, 5);
+  const priceSpeech = skinoxyPriceSpeech(p);
+  const giftSpeech = skinoxyGiftSpeech(p);
+  const limitedSpeech = p.limited ? 'จำนวนมีจำกัด ใครสนใจรีบตัดสินใจกดตะกร้าไว้ก่อน' : '';
+  const choiceSpeech = buildSkinoxyChoiceSpeech(p);
+  const painSpeech = buildSkinoxyPainPointSpeech(p);
+  const hooks = skinoxyAdvisorHooks(p);
+  const hook = hooks[hookVariant % hooks.length];
+
+  return `${skinoxySummaryHeader(p, 'advisor')}
+
+# สคริปต์ TikTok Live
+
+${buildSession(1, 'เปิดปัญหาและกลุ่มที่เหมาะ', [
+  hook,
+  painSpeech,
+  'ถ้าตรงกับปัญหาที่เจออยู่ กดตะกร้าไว้ก่อนได้เลย แล้วมาดูรายละเอียดการเลือกสูตรกันต่อ'
+])}
+
+${buildSession(2, 'ช่วยเลือกสูตรให้ตรงปัญหา', [
+  choiceSpeech,
+  giftSpeech ? `นอกจากตัวหลัก โปรนี้${giftSpeech}เป็นส่วนเสริมด้วย` : '',
+  'ถ้ายังไม่แน่ใจว่าเลือกสูตรไหนดี ลองกลับไปเทียบกับปัญหาผิวที่เจอจริงอีกรอบ แล้วเลือกตัวที่ตรงที่สุด'
+])}
+
+${buildSession(3, 'ราคา เงื่อนไข และปิดด้วยความเหมาะสม', [
+  priceSpeech ? `สำหรับราคา ${priceSpeech}` : 'ราคาให้ดูตามรายละเอียดในตะกร้า',
+  limitedSpeech,
+  pains.length
+    ? `สรุปคือถ้ากำลังเจอ ${listForSpeech(pains, 'ปัญหาผิวที่ว่ามา')} โปรนี้ตอบโจทย์ได้ตรงจุด กดตะกร้าไว้แล้วเลือกสูตรที่เหมาะกับตัวเองได้เลย`
+    : 'กดตะกร้าไว้แล้วเลือกสูตรที่ตรงกับปัญหาผิวของตัวเองได้เลย'
+])}
+
+# Key Message
+- Strategy: Advisor
+- ${p.brandName} ${p.mainProductText || 'สินค้าในโปรนี้'}
+- เหมาะกับคนที่กำลังเจอ ${listForSpeech(pains, 'ปัญหาผิวที่อยากเลือกสูตรให้ตรงจุด')}
+- ${formatVariantGuidance(p)}
+${formatPriceLines(p).map(line => `- ${line}`).join('\n')}
+${p.gift ? `- ของแถม ${formatGiftLine(p)}` : ''}
+${p.limited ? '- ข้อมูลโปรระบุจำนวนจำกัด' : ''}
+- ใช้คำว่า ตะกร้า เท่านั้น
+
+# Producer Push Line
+- ดัน ${p.mainProductText || 'สินค้าในโปร'} ขึ้นตะกร้า
+- ย้ำว่าโปรนี้ช่วยแก้ปัญหาผิวแบบไหน
+- ${p.promoPrice ? `ย้ำราคาโปร ${formatMoney(p.promoPrice)} บาท` : 'ย้ำดูราคาในตะกร้า'}
+- ${p.gift ? `ย้ำของแถม ${formatGiftLine(p)}` : 'ย้ำความคุ้มของโปร'}
+- ${p.allVariantsSelected ? 'ย้ำเลือกได้ทุกสูตรที่ร่วมรายการตามปัญหาผิว' : `ย้ำสูตร/สี ${formatVariantList(p.selectedVariants)}`}
+- ปิดให้กดตะกร้า`;
+}
+
+function buildSkinoxyBestieScript(p, hookVariant = 0){
+  const pains = getSkinoxyPainPoints(p).slice(0, 4);
+  const benefits = getSkinoxyBenefits(p).slice(0, 4);
+  const priceSpeech = skinoxyPriceSpeech(p);
+  const giftSpeech = skinoxyGiftSpeech(p);
+  const limitedSpeech = p.limited ? 'จำนวนมีจำกัดด้วยนะ ใครเล็งอยู่รีบกดตะกร้าไว้ก่อน' : '';
+  const hooks = skinoxyBestieHooks(p);
+  const hook = hooks[hookVariant % hooks.length];
+
+  const scenePicture = benefits.length
+    ? `ลองนึกภาพหลังใช้ ${p.mainProductText || 'ตัวนี้'} ดู ${listForSpeech(benefits, 'ผิวดูดีขึ้น')} แบบที่รู้สึกได้เองเลย`
+    : `ลองนึกภาพหลังใช้ ${p.mainProductText || 'ตัวนี้'} ดู เป็นความรู้สึกที่ผิวเปลี่ยนไปแบบจับต้องได้`;
+
+  const styleRecommend = p.product && p.selectedVariants.length
+    ? p.selectedVariants.map(variant => {
+        const pain = (variant.pain_points || []).slice(0, 2).join(' หรือ ');
+        const label = [variant.name, variant.color].filter(Boolean).join(' ');
+        return `ถ้าเป็นคนที่มักเจอ ${pain || 'ปัญหาผิวแบบนี้'} ลอง ${label} ดู`;
+      }).join(' ')
+    : 'ลองเลือกตามความรู้สึกที่อยากได้ แล้วเช็กรายละเอียดในตะกร้าอีกที';
+
+  return `${skinoxySummaryHeader(p, 'bestie')}
+
+# สคริปต์ TikTok Live
+
+${buildSession(1, 'เปิดจากชีวิตประจำวันและภาพหลังใช้', [
+  hook,
+  scenePicture,
+  pains.length ? `ยิ่งถ้ากำลังเจอ ${listForSpeech(pains, 'ผิวที่ไม่ค่อยเป็นใจ')} อยู่ด้วย ตัวนี้น่าจะช่วยได้เยอะ` : '',
+  'ใครสนใจกดตะกร้าเก็บไว้ก่อนได้เลย'
+])}
+
+${buildSession(2, 'เลือกให้เข้ากับสไตล์ตัวเอง', [
+  styleRecommend,
+  'ใครกำลังเล็งอยู่ทักมาคุยในคอมเมนต์ได้เลยว่าผิวเป็นแบบไหน จะได้แนะนำให้ตรงขึ้น',
+  giftSpeech ? `แถมยังมี ${formatGiftLine(p)} ให้ด้วย ยิ่งคุ้ม` : ''
+])}
+
+${buildSession(3, 'ราคาน่ารักและปิดแบบเพื่อนๆ', [
+  priceSpeech ? `ราคาก็น่ารักด้วย ${priceSpeech}` : 'ราคาให้ดูตามรายละเอียดในตะกร้า',
+  limitedSpeech,
+  'ถ้าอยากลองดูแลผิวให้ดีขึ้นแบบง่ายๆ กดตะกร้าแล้วเลือกสูตรที่ชอบไปเลย'
+])}
+
+# Key Message
+- Strategy: Bestie
+- ${p.brandName} ${p.mainProductText || 'สินค้าในโปรนี้'}
+- ภาพหลังใช้: ${listForSpeech(benefits, 'ผิวดูดีขึ้น')}
+- ${formatVariantGuidance(p)}
+${formatPriceLines(p).map(line => `- ${line}`).join('\n')}
+${p.gift ? `- ของแถม ${formatGiftLine(p)}` : ''}
+- ใช้คำว่า ตะกร้า เท่านั้น
+
+# Producer Push Line
+- เปิดจากภาพชีวิตประจำวัน
+- ชวนคอมเมนต์ถามปัญหาผิว
+- ${p.promoPrice ? `ย้ำราคาโปร ${formatMoney(p.promoPrice)} บาท` : 'ย้ำดูราคาในตะกร้า'}
+- ${p.gift ? `ย้ำของแถม ${formatGiftLine(p)}` : 'ย้ำความคุ้มของโปร'}
+- ปิดให้กดตะกร้า`;
+}
+
+function buildSkinoxyCloserScript(p, hookVariant = 0){
+  const priceSpeech = skinoxyPriceSpeech(p);
+  const giftSpeech = skinoxyGiftSpeech(p);
+  const limitedSpeech = p.limited ? 'ย้ำว่าจำนวนมีจำกัดจริงตามข้อมูลโปร ใครสนใจรีบกดตะกร้า' : '';
+  const hooks = skinoxyCloserHooks(p);
+  const hook = hooks[hookVariant % hooks.length];
+  const itemize = `เซตนี้ได้ ${p.mainProductText || 'สินค้าในโปรนี้'}${p.gift ? ` พร้อม ${formatGiftLine(p)}` : ''}`;
+  const valueLine = p.averagePrice ? `เฉลี่ยแล้วตกชิ้นละ ${formatMoney(p.averagePrice)} บาทเท่านั้น` : '';
+
+  return `${skinoxySummaryHeader(p, 'closer')}
+
+# สคริปต์ TikTok Live
+
+${buildSession(1, 'เปิดด้วยโปรโมชั่นและสิ่งที่ได้รับ', [
+  hook,
+  itemize,
+  priceSpeech || 'ราคาให้ดูตามรายละเอียดในตะกร้า',
+  'กดตะกร้าเก็บไว้ก่อนได้เลย เดี๋ยวพาไปดูความคุ้มแบบละเอียด'
+])}
+
+${buildSession(2, 'เทียบราคาและความคุ้ม', [
+  priceSpeech ? `ทวนอีกรอบ ${priceSpeech}` : '',
+  valueLine,
+  giftSpeech,
+  p.allVariantsSelected ? 'เลือกได้ทุกสูตรที่ร่วมรายการ ไม่ต้องกังวลว่าจะพลาดสูตรที่ชอบ' : `สูตรในโปรนี้คือ ${formatVariantList(p.selectedVariants)}`
+])}
+
+${buildSession(3, 'ปิดการขายย้ำหลายจุด', [
+  `สรุปอีกรอบ ${itemize}`,
+  priceSpeech || '',
+  limitedSpeech,
+  'ถ้ากำลังจะซื้อสกินแคร์อยู่แล้ว โปรนี้คุ้มกว่าซื้อแยกแน่นอน กดตะกร้าตอนนี้เลย'
+])}
+
+# Key Message
+- Strategy: Closer
+- ${p.brandName} ${p.mainProductText || 'สินค้าในโปรนี้'}
+${formatPriceLines(p).map(line => `- ${line}`).join('\n')}
+${p.gift ? `- ของแถม ${formatGiftLine(p)}` : ''}
+${p.averagePrice ? `- เฉลี่ยชิ้นละ ${formatMoney(p.averagePrice)} บาท` : ''}
+${p.limited ? '- ข้อมูลโปรระบุจำนวนจำกัด' : ''}
+- ใช้คำว่า ตะกร้า เท่านั้น
+
+# Producer Push Line
+- ดัน ${p.mainProductText || 'สินค้าในโปร'} ขึ้นตะกร้า
+- ย้ำราคาปกติ/ราคาโปรซ้ำๆ
+- ${p.gift ? `ย้ำของแถม ${formatGiftLine(p)}` : 'ย้ำความคุ้มของโปร'}
+- ${p.limited ? 'ย้ำจำนวนจำกัด' : 'ย้ำให้ตัดสินใจตอนนี้'}
+- ปิดให้กดตะกร้า`;
+}
+
+// ---------------------------------------------------------------------------
+// KMB — shared fact-speech helpers (strategy-agnostic; reused by all 3)
+// ---------------------------------------------------------------------------
+function buildKmbExperienceLine(p, variant){
+  if (p.promotionType.id === 'confidence_set') {
+    return `${variant?.name || 'กลิ่นที่เลือก'} ให้ Character ${formatMood(variant)} แล้วจับคู่กับ Underarm Dry Serum เป็น Routine ความหอมและความมั่นใจในชีวิตประจำวัน`;
+  }
+
+  if (p.promotionType.id === 'fragrance_layering_set') {
+    return `ลำดับการใช้คือเริ่มจาก Shower ตามด้วย Lotion แล้วปิดท้ายด้วยกลิ่น ${variant?.name || 'ที่เลือก'} เริ่มความหอมตอนอาบน้ำ ต่อด้วยการบำรุงผิว ให้กลิ่นไปในทิศทางเดียวกัน`;
+  }
+
+  if (p.promotionType.id === 'fragrance_duo') {
+    return 'ใช้สลับตาม Mood หรือจัดเป็น Routine ความหอมในวันที่อยากเปลี่ยน Character';
+  }
+
+  return `${variant?.name || 'กลิ่นที่เลือก'} เหมาะกับ Mood ${formatMood(variant)} และโอกาสอย่าง ${formatOccasion(variant)}`;
+}
+
+function buildKmbMoodChoicesSpeech(p){
+  if (p.selectedFragrances.length) {
+    return p.selectedFragrances.map(variant =>
+      `${variant.name} เหมาะกับ Mood ${formatMood(variant)} และโอกาสอย่าง ${formatOccasion(variant)}`
+    ).join(' ส่วน ');
+  }
+
+  const moodChoices = (p.knowledge.choose_by_mood || []).slice(0, 6);
+  return moodChoices.length
+    ? `ถ้ายังไม่ได้ล็อกกลิ่น ให้ใช้ Mood เป็นตัวเลือกได้เลย ${moodChoices.join('. ')}.`
+    : 'ถ้ายังไม่ได้ล็อกกลิ่น ให้กดตะกร้าแล้วเลือกกลิ่นที่ร่วมรายการจาก Mood และ Character ที่ชอบ';
+}
+
+function buildKmbPainPointSpeech(p, fragrance){
+  const character = getBrandCharacter(p);
+  if (fragrance) {
+    return `หลายคนอยากมีกลิ่นหรือคาแรกเตอร์ที่ชัด แต่ไม่อยากเลือกกลิ่นแบบสุ่ม สำหรับโปรนี้จุดจำง่ายอยู่ที่ ${fragrance.name} ให้ Mood ${formatMood(fragrance)} และใช้กับ ${formatOccasion(fragrance)}`;
+  }
+
+  return `${character.pain_point_lens} ถ้าโปรไม่ได้ระบุกลิ่น ให้เริ่มจาก Mood ที่อยากได้ แล้วกดตะกร้าเพื่อเลือกกลิ่นที่ร่วมรายการ`;
+}
+
+function buildKmbProductRoleSpeech(p){
+  const text = p.raw || p.mainProductText || '';
+  const roles = [];
+  if (/edt|perfume|fragrance|น้ำหอม/i.test(text) || p.selectedFragrances.length) {
+    roles.push('EDT เป็นตัวปิด Character ของลุคและเป็นกลิ่นหลักที่คนจำ Mood ได้');
+  }
+  if (/underarm|dry serum|ใต้วงแขน/i.test(text) || hasProductId(p.matchedProducts, 'underarm_dry_serum')) {
+    roles.push('Underarm Dry Serum เป็นชิ้นที่พาไปสู่ Routine ความมั่นใจในชีวิตประจำวัน');
+  }
+  if (/shower|เจลอาบน้ำ/i.test(text) || hasProductId(p.matchedProducts, 'perfume_shower_gel')) {
+    roles.push('Shower เป็นจุดเริ่มต้นของ Routine ความหอมตั้งแต่ตอนอาบน้ำ');
+  }
+  if (/lotion|โลชั่น/i.test(text) || hasProductId(p.matchedProducts, 'body_lotion_revamp')) {
+    roles.push('Lotion เป็นชั้นบำรุงผิวและช่วยให้กลิ่นใน Routine ไปในทิศทางเดียวกัน');
+  }
+
+  return roles.join(' ') || 'สินค้าในโปรนี้ขายจาก Mood, Character และโอกาสใช้งาน โดยยึดข้อมูลที่อยู่ในตะกร้า';
+}
+
+function kmbPriceParts(p){
+  const priceNormal = p.regular ? `ราคาปกติ ${formatMoney(p.regular)} บาท` : 'ไม่มีข้อมูลราคาปกติ';
+  const pricePromo = p.promoPrice ? `ราคาพิเศษ ${formatMoney(p.promoPrice)} บาท` : 'ไม่มีข้อมูลราคาพิเศษ';
+  const tierSpeech = buildTierPriceSpeech(p);
+  return { priceNormal, pricePromo, tierSpeech };
+}
+
+function kmbSummaryHeader(p, strategyKey, items){
+  const character = getBrandCharacter(p);
+  const meta = STRATEGY_META[strategyKey];
+  return `# สรุปข้อมูลโปรโมชั่น
+
+- แบรนด์: ${p.brandName}
+- Strategy: ${meta.name} (${meta.thai})
+- ชื่อโปร: ${p.title || 'ไม่ระบุชื่อโปร'}
+- สินค้าในเซ็ต: ${items}
+- ของแถม: ${formatGiftLine(p)}
+- ราคาปกติ: ${p.regular ? `${formatMoney(p.regular)} บาท` : '-'}
+- ราคาพิเศษ: ${p.promoPrice ? `${formatMoney(p.promoPrice)} บาท` : '-'}
+- Promotion Type: ${p.promotionType.name}
+- Brand Character: ${character.positioning}`;
+}
+
+function kmbAdvisorHooks(p){
+  return [
+    'เคยเลือกน้ำหอมผิดกลิ่นจนไม่ได้ใช้ต่อไหม ปัญหานี้แก้ได้ด้วยการเลือกจาก Mood ที่อยากได้ก่อนเลือกกลิ่น',
+    'ถ้ายังไม่มีกลิ่นประจำตัว หรืออยากได้กลิ่นที่ตรงกับคาแรกเตอร์มากขึ้น มาเช็กกันว่ากลิ่นในโปรนี้เหมาะกับใคร',
+    'หลายคนเลือกน้ำหอมจากความดังของกลิ่นอย่างเดียว แต่กลิ่นที่ใช่ควรมาจาก Mood และโอกาสใช้งานของตัวเองก่อน'
+  ];
+}
+
+function kmbBestieHooks(p){
+  return [
+    'นึกภาพวันที่แต่งตัวเสร็จ ฉีดน้ำหอมทีเดียวแล้วมั่นใจขึ้นทั้งวันดูสิ',
+    'กลิ่นแบบนี้เหมาะกับวันที่อยากให้คนเดินผ่านแล้วจำได้ ไม่ว่าจะไปคาเฟ่ ไปทำงาน หรือเดตพิเศษ',
+    'ถ้าเป็นคนที่ชอบมีกลิ่นเป็นซิกเนเจอร์ประจำตัว โปรนี้ช่วยให้เจอกลิ่นที่ใช่ได้ง่ายขึ้น'
+  ];
+}
+
+function kmbCloserHooks(p, items, priceNormal, pricePromo){
+  return [
+    `โปรนี้จาก ${priceNormal} วันนี้เหลือ ${pricePromo} คุ้มกว่าซื้อแยกชัดเจน`,
+    `เซตนี้ได้ ${items} ครบ ไม่ต้องซื้อทีละชิ้นให้แพงกว่าเดิม`,
+    'ถ้ากำลังจะซื้อน้ำหอมอยู่แล้ว โปรนี้จัดเป็นเซตให้คุ้มกว่าซื้อแยกแน่นอน'
+  ];
+}
+
+function buildKmbAdvisorScript(p, hookVariant = 0){
+  const fragrance = getPrimaryFragrance(p);
+  const items = formatItemsInSet(p);
+  const itemsSpeech = formatItemsForSpeech(p);
+  const { priceNormal, pricePromo, tierSpeech } = kmbPriceParts(p);
+  const painSpeech = buildKmbPainPointSpeech(p, fragrance);
+  const moodChoicesSpeech = buildKmbMoodChoicesSpeech(p);
+  const productRoleSpeech = buildKmbProductRoleSpeech(p);
+  const giftSpeech = p.gift ? `แถมด้วย ${formatGiftLine(p)}` : '';
+  const hooks = kmbAdvisorHooks(p);
+  const hook = hooks[hookVariant % hooks.length];
+
+  return `${kmbSummaryHeader(p, 'advisor', items)}
+
+# สคริปต์ TikTok Live
+
+${buildSession(1, 'เปิดจากปัญหาการเลือกกลิ่น', [
+  hook,
+  painSpeech,
+  `โปรนี้ได้ ${itemsSpeech}`,
+  'ถ้ายังไม่มั่นใจว่ากลิ่นไหนตรงกับตัวเอง ลองไล่เช็กไปด้วยกัน'
+])}
+
+${buildSession(2, 'ช่วยเลือกกลิ่นและบทบาทสินค้าในเซ็ต', [
+  moodChoicesSpeech,
+  productRoleSpeech,
+  giftSpeech ? `${giftSpeech} ช่วยเสริม Routine ความหอมให้ครบขึ้นด้วย` : ''
+])}
+
+${buildSession(3, 'ราคาและปิดด้วยความเหมาะสม', [
+  tierSpeech || `${priceNormal} ตอนนี้ ${pricePromo}`,
+  fragrance ? `ถ้าอยาก Mood ${formatMood(fragrance)} กลิ่นนี้ตอบโจทย์ตรงจุด กดตะกร้าเลือกได้เลย` : 'เลือกกลิ่นที่ตรงกับ Mood ที่อยากได้ แล้วกดตะกร้าได้เลย'
+])}
+
+# Key Message สำหรับ MC
+- Strategy: Advisor
+- ${p.brandName} เป็น Lifestyle Fragrance Brand
+- ${priceNormal}
+- ${pricePromo}
+- ${p.gift ? `ของแถม ${formatGiftLine(p)}` : 'ไม่มีข้อมูลของแถม'}
+- ปิดให้กดตะกร้า
+
+# Producer Push Line
+- ย้ำแบรนด์ ${p.brandName}
+- ย้ำ ${priceNormal}
+- ย้ำ ${pricePromo}
+- ปิดด้วยกดตะกร้า`;
+}
+
+function buildKmbBestieScript(p, hookVariant = 0){
+  const fragrance = getPrimaryFragrance(p);
+  const items = formatItemsInSet(p);
+  const itemsSpeech = formatItemsForSpeech(p);
+  const { priceNormal, pricePromo, tierSpeech } = kmbPriceParts(p);
+  const experience = buildKmbExperienceLine(p, fragrance);
+  const giftSpeech = p.gift ? `แถมด้วย ${formatGiftLine(p)}` : '';
+  const hooks = kmbBestieHooks(p);
+  const hook = hooks[hookVariant % hooks.length];
+
+  return `${kmbSummaryHeader(p, 'bestie', items)}
+
+# สคริปต์ TikTok Live
+
+${buildSession(1, 'เปิดจากภาพชีวิตประจำวัน', [
+  hook,
+  fragrance ? `${fragrance.name} ให้ Mood ${formatMood(fragrance)} เหมาะกับโอกาสอย่าง ${formatOccasion(fragrance)}` : 'เลือกกลิ่นตาม Mood ที่อยากเป็นในวันนี้ได้เลย',
+  'ใครนึกภาพออกแล้วอยากลอง ทักมาคุยในคอมเมนต์ได้เลยว่าอยากได้ Mood แบบไหน'
+])}
+
+${buildSession(2, 'เล่า Routine และประสบการณ์หลังใช้', [
+  experience,
+  `โปรนี้ได้ ${itemsSpeech}`,
+  giftSpeech ? `${giftSpeech} ทำให้ Routine ความหอมครบขึ้นอีก` : ''
+])}
+
+${buildSession(3, 'ราคาน่ารักและปิดแบบเพื่อนๆ', [
+  tierSpeech || `ราคาน่ารักด้วย ${priceNormal} ตอนนี้ ${pricePromo}`,
+  'ถ้าอยากมีกลิ่นเป็นซิกเนเจอร์ของตัวเอง กดตะกร้าเลือกกลิ่นที่ชอบไปเลย'
+])}
+
+# Key Message สำหรับ MC
+- Strategy: Bestie
+- ${p.brandName} เป็น Lifestyle Fragrance Brand
+- ${priceNormal}
+- ${pricePromo}
+- ปิดให้กดตะกร้า
+
+# Producer Push Line
+- เปิดจากภาพชีวิตประจำวันและ Mood
+- ชวนคอมเมนต์ถาม Mood ที่อยากได้
+- ย้ำ ${priceNormal}
+- ย้ำ ${pricePromo}
+- ปิดด้วยกดตะกร้า`;
+}
+
+function buildKmbCloserScript(p, hookVariant = 0){
+  const items = formatItemsInSet(p);
+  const itemsSpeech = formatItemsForSpeech(p);
+  const { priceNormal, pricePromo, tierSpeech } = kmbPriceParts(p);
+  const discountLine = formatDiscountLine(p);
+  const averageLine = formatAverageLine(p);
+  const giftSpeech = p.gift ? `แถมด้วย ${formatGiftLine(p)}` : '';
+  const hooks = kmbCloserHooks(p, itemsSpeech, priceNormal, pricePromo);
+  const hook = hooks[hookVariant % hooks.length];
+
+  return `${kmbSummaryHeader(p, 'closer', items)}
+
+# สคริปต์ TikTok Live
+
+${buildSession(1, 'เปิดด้วยโปรโมชั่นและสิ่งที่ได้รับ', [
+  hook,
+  `โปรนี้ได้ ${itemsSpeech}`,
+  tierSpeech || `${priceNormal} ตอนนี้ ${pricePromo}`,
+  'กดตะกร้าเก็บไว้ก่อนได้เลย'
+])}
+
+${buildSession(2, 'เทียบราคาและความคุ้ม', [
+  p.discount ? `${discountLine}.` : '',
+  p.averagePrice ? `${averageLine}.` : '',
+  giftSpeech
+])}
+
+${buildSession(3, 'ปิดการขายย้ำหลายจุด', [
+  `ทวนปิดโปรนี้ ได้ ${itemsSpeech}`,
+  tierSpeech || `${priceNormal} ตอนนี้ ${pricePromo}`,
+  p.discount ? `${discountLine}.` : '',
+  'ถ้ากำลังจะซื้อน้ำหอมอยู่แล้ว โปรนี้คุ้มกว่าซื้อแยกแน่นอน กดตะกร้าตอนนี้เลย'
+])}
+
+# Key Message สำหรับ MC
+- Strategy: Closer
+- ${p.brandName}
+- ${priceNormal}
+- ${pricePromo}
+- ${discountLine}
+- ${averageLine}
+- ปิดให้กดตะกร้า
+
+# Producer Push Line
+- ดันโปรนี้ขึ้นตะกร้า
+- ย้ำ ${priceNormal}
+- ย้ำ ${pricePromo}
+- ย้ำ ${discountLine}
+- ปิดด้วยกดตะกร้า`;
+}
+
+// ---------------------------------------------------------------------------
+// DGMR — shared fact-speech helpers (strategy-agnostic; reused by all 3)
+// ---------------------------------------------------------------------------
+function hasDgmrSeriesSpecified(p){
+  return /jingi|จิงกิ|dlaesoo|ดาเลซู|jinsoo|จินซู/i.test(p.raw);
+}
+
+function getDgmrRelevantProducts(p){
+  const matched = (p.matchedProducts || []).map(item => item.product).filter(Boolean);
+  return matched.length ? matched : (p.knowledge.products || []);
+}
+
+function getDgmrConcernPoints(p){
+  return uniqueFilled(getDgmrRelevantProducts(p).flatMap(product => product.hair_concerns || []));
+}
+
+function getDgmrBenefitPoints(p){
+  return uniqueFilled(getDgmrRelevantProducts(p).flatMap(product => product.benefits || []));
+}
+
+function buildDgmrPainPointSpeech(p){
+  const concerns = getDgmrConcernPoints(p).slice(0, 6);
+  return `โปรนี้เปิดจากปัญหาผมและหนังศีรษะได้เลย ไม่ว่าจะเป็น ${listForSpeech(concerns, 'ปัญหาผมและหนังศีรษะที่อยู่ในตะกร้า')} แล้วค่อยพาเข้า Routine ที่เหมาะกับสินค้าในเซ็ต`;
+}
+
+function buildDgmrConcernChoiceSpeech(p){
+  if (hasDgmrSeriesSpecified(p)) {
+    return 'โปรนี้มี Series ในข้อมูลแล้ว จึงโฟกัส Routine ของ Series นั้นตามข้อมูลโปร';
+  }
+
+  const choices = (p.knowledge.choose_by_hair_concern || []).slice(0, 3);
+  return choices.length
+    ? `ถ้ายังไม่ได้ล็อก Series ไว้ เลือกตามปัญหาผมได้เลย ${choices.join('. ')}.`
+    : 'ถ้ายังไม่ได้ระบุ Series เลือกสูตรที่ร่วมรายการตามปัญหาผมในตะกร้า';
+}
+
+function buildDgmrBenefitSpeech(p){
+  const benefits = getDgmrBenefitPoints(p).slice(0, 5);
+  return `จุดเด่นของ Routine นี้คือ ${listForSpeech(benefits, 'บทบาทของสินค้าใน Routine ดูแลผม')}`;
+}
+
+function buildDgmrProductRoles(p){
+  const text = p.raw;
+  const roles = [];
+  if (/แชมพู|shampoo/i.test(text)) {
+    roles.push('Shampoo เป็นขั้นตอนทำความสะอาดหนังศีรษะและเส้นผม ให้หนังศีรษะรู้สึกสะอาดและเบาสบาย');
+  }
+  if (/ครีมนวด|conditioner/i.test(text)) {
+    roles.push('Conditioner เป็นขั้นตอนบำรุงเส้นผม ช่วยให้ผมนุ่มและหวีง่ายขึ้น');
+  }
+  if (/hair\s*tonic|โทนิค/i.test(text)) {
+    roles.push('Hair Tonic เป็นขั้นตอนบำรุงหนังศีรษะหลังสระ เหมือนสกินแคร์สำหรับหนังศีรษะ');
+  }
+  if (/hair\s*pack|ทรีตเมนต์|treatment/i.test(text)) {
+    roles.push('Hair Pack เป็นขั้นตอน Treatment สำหรับผมแห้งเสียมากหรือพันกันง่าย');
+  }
+
+  return roles.join(' ') || 'เลือกสินค้าให้ตรงกับ Routine ดูแลผมที่อยู่ในตะกร้า';
+}
+
+function buildDgmrRoutineLine(p){
+  const typeId = p.promotionType.id;
+  if (typeId.includes('hair_fall_complete_set')) {
+    return 'ใช้เป็น Routine ได้เลย เริ่มจาก Shampoo ทำความสะอาด ตามด้วย Conditioner บำรุงเส้นผม แล้วปิดท้ายด้วย Hair Tonic บำรุงหนังศีรษะหลังสระ';
+  }
+  if (typeId.includes('damage_recovery_set')) {
+    return 'ใช้เป็น Routine คือ Shampoo ตามด้วย Conditioner แล้วเสริมด้วย Hair Pack สำหรับคนที่อยากดูแลผมแห้งเสียแบบต่อเนื่อง';
+  }
+  if (typeId.includes('scalp_care_set')) {
+    return 'ใช้ Shampoo คู่กับ Hair Tonic เน้นดูแลหนังศีรษะและรากผมในขั้นตอนเดียวกัน';
+  }
+  if (typeId.includes('daily_hair_care_set')) {
+    return 'ใช้ Shampoo คู่กับ Conditioner เป็น Routine พื้นฐานสำหรับทำความสะอาดและบำรุงเส้นผม';
+  }
+  if (typeId.includes('stock_up_set')) {
+    return 'เลือกสูตรตามปัญหาผม แล้วซื้อใช้ต่อเนื่องได้ยาวสำหรับคนใช้ประจำ';
+  }
+
+  return 'เลือกสินค้าในเซ็ตให้ตรงกับปัญหาผมและใช้ต่อเนื่อง';
+}
+
+function dgmrPriceParts(p){
+  const priceNormal = p.regular ? `ราคาปกติ ${formatMoney(p.regular)} บาท` : 'ไม่มีข้อมูลราคาปกติ';
+  const pricePromo = p.promoPrice ? `ราคาพิเศษ ${formatMoney(p.promoPrice)} บาท` : 'ไม่มีข้อมูลราคาพิเศษ';
+  const tierSpeech = buildTierPriceSpeech(p);
+  return { priceNormal, pricePromo, tierSpeech };
+}
+
+function dgmrSummaryHeader(p, strategyKey, items){
+  const character = getBrandCharacter(p);
+  const meta = STRATEGY_META[strategyKey];
+  return `# สรุปข้อมูลโปรโมชั่น
+
+- แบรนด์: ${p.brandName}
+- Strategy: ${meta.name} (${meta.thai})
+- ชื่อโปร: ${p.title || 'ไม่ระบุชื่อโปร'}
+- สินค้าในเซ็ต: ${items}
+- ของแถม: ${formatGiftLine(p)}
+- ราคาปกติ: ${p.regular ? `${formatMoney(p.regular)} บาท` : '-'}
+- ราคาพิเศษ: ${p.promoPrice ? `${formatMoney(p.promoPrice)} บาท` : '-'}
+- Promotion Type: ${p.promotionType.name}
+- Brand Character: ${character.positioning}`;
+}
+
+function dgmrAdvisorHooks(p){
+  const concerns = getDgmrConcernPoints(p).slice(0, 4);
+  return [
+    'เคยรู้สึกว่าดูแลผมสม่ำเสมออยู่แล้ว แต่ผมยังร่วงหรือแห้งเสียเหมือนเดิมไหม บางทีปัญหาอาจอยู่ที่ Routine ไม่ครบมากกว่า',
+    `ถ้ากำลังเจอปัญหาผมแบบ ${listForSpeech(concerns, 'ปัญหาผมและหนังศีรษะ')} อยู่ตอนนี้ มาเช็กกันว่าเซตนี้ช่วยตรงไหนได้บ้าง`,
+    'หลายคนเลือกแฮร์แคร์จากชื่อแบรนด์อย่างเดียว แต่การเลือกจากปัญหาผมจริงๆ จะตรงจุดกว่า วันนี้เลยอยากพามาเช็กทีละขั้น'
+  ];
+}
+
+function dgmrBestieHooks(p){
+  return [
+    'นึกภาพผมที่สระเสร็จแล้วรู้สึกเบา ไม่มัน ไม่ต้องกังวลทั้งวันดูสิ',
+    'ถ้าเป็นคนที่อยากมี Routine ดูแลผมแบบไม่ต้องคิดเยอะทุกเช้า เซตนี้ช่วยได้',
+    'จำความรู้สึกตอนหนังศีรษะโล่งสบายหลังสระได้ไหม เซตนี้พาไปถึงจุดนั้นได้'
+  ];
+}
+
+function dgmrCloserHooks(p, items, priceNormal, pricePromo){
+  return [
+    `เซตนี้จาก ${priceNormal} วันนี้เหลือ ${pricePromo} คุ้มกว่าซื้อแยกทีละขวดชัดเจน`,
+    `ได้ ${items} ครบในราคาเดียว ไม่ต้องกลับมาซื้อซ้ำทีละชิ้น`,
+    'ถ้ากำลังจะตุนแฮร์แคร์อยู่แล้ว เซตนี้จัดให้คุ้มกว่าซื้อแยกแน่นอน'
+  ];
+}
+
+function buildDgmrAdvisorScript(p, hookVariant = 0){
+  const items = formatItemsInSet(p);
+  const itemsSpeech = formatItemsForSpeech(p);
+  const { priceNormal, pricePromo, tierSpeech } = dgmrPriceParts(p);
+  const painSpeech = buildDgmrPainPointSpeech(p);
+  const concernSpeech = buildDgmrConcernChoiceSpeech(p);
+  const benefitSpeech = buildDgmrBenefitSpeech(p);
+  const roleSpeech = buildDgmrProductRoles(p);
+  const giftSpeech = p.gift ? `แถมด้วย ${formatGiftLine(p)}` : '';
+  const hooks = dgmrAdvisorHooks(p);
+  const hook = hooks[hookVariant % hooks.length];
+
+  return `${dgmrSummaryHeader(p, 'advisor', items)}
+
+# สคริปต์ TikTok Live
+
+${buildSession(1, 'เปิดปัญหาผมและกลุ่มที่เหมาะ', [
+  hook,
+  painSpeech,
+  `เซ็ตนี้ได้ ${itemsSpeech}`,
+  'ถ้าตรงกับปัญหาที่เจออยู่ กดตะกร้าไว้ก่อนได้เลย'
+])}
+
+${buildSession(2, 'ช่วยเลือก Series และอธิบายบทบาทสินค้า', [
+  concernSpeech,
+  roleSpeech,
+  benefitSpeech,
+  giftSpeech ? `${giftSpeech} ช่วยให้ Routine หลังสระครบขึ้นด้วย` : ''
+])}
+
+${buildSession(3, 'ราคาและปิดด้วยความเหมาะสม', [
+  tierSpeech || `${priceNormal} ตอนนี้ ${pricePromo}`,
+  `สรุปคือถ้ากำลังเจอปัญหาผมที่ว่ามา เซตนี้ตอบโจทย์ได้ตรงจุด กดตะกร้าไว้แล้วเลือกสูตรที่เหมาะกับตัวเองได้เลย`
+])}
+
+# Key Message สำหรับ MC
+- Strategy: Advisor
+- ${p.brandName} เป็น Hair Care Brand
+- เหมาะกับคนที่กำลังเจอ ${listForSpeech(getDgmrConcernPoints(p).slice(0, 6), 'ปัญหาผมและหนังศีรษะที่อยากดูแล')}
+- ${priceNormal}
+- ${pricePromo}
+- ปิดให้กดตะกร้า
+
+# Producer Push Line
+- เปิดจากปัญหาผมก่อน
+- ย้ำ ${priceNormal}
+- ย้ำ ${pricePromo}
+- ปิดด้วยกดตะกร้า`;
+}
+
+function buildDgmrBestieScript(p, hookVariant = 0){
+  const items = formatItemsInSet(p);
+  const itemsSpeech = formatItemsForSpeech(p);
+  const { priceNormal, pricePromo, tierSpeech } = dgmrPriceParts(p);
+  const routineLine = buildDgmrRoutineLine(p);
+  const giftSpeech = p.gift ? `แถมด้วย ${formatGiftLine(p)}` : '';
+  const hooks = dgmrBestieHooks(p);
+  const hook = hooks[hookVariant % hooks.length];
+
+  return `${dgmrSummaryHeader(p, 'bestie', items)}
+
+# สคริปต์ TikTok Live
+
+${buildSession(1, 'เปิดจากความรู้สึกหลังสระผม', [
+  hook,
+  `เซ็ตนี้ได้ ${itemsSpeech}`,
+  'ใครนึกภาพออกแล้วอยากลอง ทักมาคุยในคอมเมนต์ได้เลยว่าผมเป็นแบบไหน'
+])}
+
+${buildSession(2, 'เล่า Routine แบบเพื่อนแนะนำ', [
+  routineLine,
+  giftSpeech ? `${giftSpeech} ทำให้ Routine หลังสระครบขึ้นอีก` : ''
+])}
+
+${buildSession(3, 'ราคาน่ารักและปิดแบบเพื่อนๆ', [
+  tierSpeech || `ราคาก็น่ารักด้วย ${priceNormal} ตอนนี้ ${pricePromo}`,
+  'ถ้าอยากมี Routine ดูแลผมที่ใช้ต่อเนื่องง่ายๆ กดตะกร้าเลือกเซตนี้ไปเลย'
+])}
+
+# Key Message สำหรับ MC
+- Strategy: Bestie
+- ${p.brandName} เป็น Hair Care Brand
+- ${priceNormal}
+- ${pricePromo}
+- ปิดให้กดตะกร้า
+
+# Producer Push Line
+- เปิดจากความรู้สึกหลังสระผม
+- ชวนคอมเมนต์ถามปัญหาผม
+- ย้ำ ${priceNormal}
+- ย้ำ ${pricePromo}
+- ปิดด้วยกดตะกร้า`;
+}
+
+function buildDgmrCloserScript(p, hookVariant = 0){
+  const items = formatItemsInSet(p);
+  const itemsSpeech = formatItemsForSpeech(p);
+  const { priceNormal, pricePromo, tierSpeech } = dgmrPriceParts(p);
+  const discountLine = formatDiscountLine(p);
+  const averageMain = formatAverageLine(p);
+  const averageAll = formatAverageIncludingGiftLine(p);
+  const giftSpeech = p.gift ? `แถมด้วย ${formatGiftLine(p)}` : '';
+  const hooks = dgmrCloserHooks(p, itemsSpeech, priceNormal, pricePromo);
+  const hook = hooks[hookVariant % hooks.length];
+
+  return `${dgmrSummaryHeader(p, 'closer', items)}
+
+# สคริปต์ TikTok Live
+
+${buildSession(1, 'เปิดด้วยโปรโมชั่นและสิ่งที่ได้รับ', [
+  hook,
+  `เซ็ตนี้ได้ ${itemsSpeech}`,
+  tierSpeech || `${priceNormal} ตอนนี้ ${pricePromo}`,
+  'กดตะกร้าเก็บไว้ก่อนได้เลย'
+])}
+
+${buildSession(2, 'เทียบราคาและความคุ้ม', [
+  p.discount ? `${discountLine}.` : '',
+  averageMain,
+  averageAll,
+  giftSpeech
+])}
+
+${buildSession(3, 'ปิดการขายย้ำหลายจุด', [
+  `ทวนปิดโปรนี้ ได้ ${itemsSpeech}`,
+  tierSpeech || `${priceNormal} ตอนนี้ ${pricePromo}`,
+  p.discount ? `${discountLine}.` : '',
+  'ถ้ากำลังจะตุนแฮร์แคร์อยู่แล้ว เซตนี้คุ้มกว่าซื้อแยกแน่นอน กดตะกร้าตอนนี้เลย'
+])}
+
+# Key Message สำหรับ MC
+- Strategy: Closer
+- ${p.brandName}
+- ${priceNormal}
+- ${pricePromo}
+- ${discountLine}
+- ปิดให้กดตะกร้า
+
+# Producer Push Line
+- ดันเซตนี้ขึ้นตะกร้า
+- ย้ำ ${priceNormal}
+- ย้ำ ${pricePromo}
+- ย้ำ ${discountLine}
+- ปิดด้วยกดตะกร้า`;
+}
+
+// ---------------------------------------------------------------------------
+// Dispatcher
+// ---------------------------------------------------------------------------
+const BRAND_STRATEGY_BUILDERS = {
+  skinoxy: { advisor: buildSkinoxyAdvisorScript, bestie: buildSkinoxyBestieScript, closer: buildSkinoxyCloserScript },
+  kmb: { advisor: buildKmbAdvisorScript, bestie: buildKmbBestieScript, closer: buildKmbCloserScript },
+  dgmr: { advisor: buildDgmrAdvisorScript, bestie: buildDgmrBestieScript, closer: buildDgmrCloserScript }
+};
+
+function getBrandKey(brandId){
+  if (brandId === 'dgmr') return 'dgmr';
+  if (brandId === 'kmb') return 'kmb';
+  return 'skinoxy';
+}
+
+function createScript(p, strategy = 'advisor', hookVariant = 0){
+  const brandKey = getBrandKey(p.brandId);
+  const strategyKey = STRATEGIES.includes(strategy) ? strategy : 'advisor';
+  const builder = BRAND_STRATEGY_BUILDERS[brandKey][strategyKey];
+  const script = builder(p, hookVariant);
+  return enforceLanguageRules(script, p);
+}
+
+function enforceLanguageRules(script, p){
+  const forbiddenTerms = p?.knowledge?.language_rules?.forbidden_terms || [
+    'ตะกร้าสีเหลือง',
+    'ครับ',
+    'ค่ะ',
+    'นะครับ',
+    'นะคะ'
+  ];
+
+  return forbiddenTerms.reduce((result, term) => {
+    const replacement = term.includes('ตะกร้า') ? 'ตะกร้า' : '';
+    return result.split(term).join(replacement);
+  }, script);
+}
+
+// ---------------------------------------------------------------------------
+// Export for Node (tests). In the browser this file is loaded via <script>
+// before app.js, so all the functions above are simply global — this guard
+// only adds the CommonJS export, it doesn't change browser behavior.
+// ---------------------------------------------------------------------------
+if (typeof module !== 'undefined' && module.exports) {
+  module.exports = {
+    normalizeText, normalizeForMatch, normalizeMoney, formatMoney, formatPercent, moneyAfter,
+    extractQuantityTiers, buildTierPriceSpeech, extractCoupon, extractFinalPrice, extractPrePriceText,
+    extractGift, extractPromotionTitle, extractProductLines, extractQuantity, extractGiftCount,
+    extractItemCount, extractDgmrMainItemCount, cleanupPhrase, getProductTerms, getVariantTerms,
+    findProduct, findProducts, resolveVariants, findSelectedFragranceVariants, formatVariantList,
+    formatVariantGuidance, getFinalPriceWarning, detectPromotionType, detectDgmrPromotionType,
+    countDgmrRole, hasProductId, formatPriceLines, formatGiftLine, formatDiscountLine,
+    formatAverageLine, formatAverageIncludingGiftLine, getPrimaryFragrance, formatMood,
+    formatOccasion, formatItemsInSet, formatItemsForSpeech, joinSentences, uniqueFilled, listForSpeech, getBrandCharacter,
+    buildSession, buildPriceSpeech, splitPromotions, parsePromotion, buildProductTruth,
+    STRATEGIES, STRATEGY_META, createScript, enforceLanguageRules, getBrandKey
+  };
+}

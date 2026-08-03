@@ -1,0 +1,9 @@
+{
+  "name": "live-script-generator",
+  "private": true,
+  "description": "TikTok Live Commerce script generator (static site) — see README.md",
+  "scripts": {
+    "test": "node tests/run-tests.js",
+    "build": "node build-site.js"
+  }
+}

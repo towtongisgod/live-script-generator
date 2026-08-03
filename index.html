@@ -22,12 +22,23 @@
         <button id="loadSample">โหลดตัวอย่าง</button>
         <button id="uploadImage" type="button">📷 ถอดข้อความจากรูป</button>
         <input type="file" id="imageInput" accept="image/*" hidden />
+        <label class="strategy-select-label">
+          วิธีขาย
+          <select id="strategySelect">
+            <option value="advisor">A — Advisor (ที่ปรึกษา)</option>
+            <option value="bestie">B — Bestie (เพื่อนแนะนำเพื่อน)</option>
+            <option value="closer">C — Closer (ปิดการขาย)</option>
+          </select>
+        </label>
         <button id="generate" class="primary">Generate Script</button>
         <button id="copyAll">Copy All</button>
+      </div>
+      <div class="actions">
         <label class="ab-toggle">
-          <input type="checkbox" id="abTestMode" />
-          สร้าง 3 แบบ (A/B Test)
+          <input type="checkbox" id="sellingStrategyMode" />
+          สร้าง 3 วิธีขาย (Advisor / Bestie / Closer)
         </label>
+        <span class="strategy-hint">ใช้ข้อมูลโปรโมชั่นเดียวกัน แต่เปลี่ยนวิธีขายเป็น Advisor, Bestie และ Closer — เหมาะสำหรับสร้างสคริปต์ไปทดสอบ A/B/C ในไลฟ์</span>
       </div>
       <p id="status" class="status"></p>
     </section>
@@ -48,6 +59,7 @@
       </div>
     </div>
   </main>
+  <script src="core.js"></script>
   <script src="app.js"></script>
 </body>
 </html>

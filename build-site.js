@@ -12,6 +12,7 @@ const sources = [
   ['/', 'index.html', 'text/html; charset=utf-8'],
   ['/index.html', 'index.html', 'text/html; charset=utf-8'],
   ['/styles.css', 'styles.css', 'text/css; charset=utf-8'],
+  ['/core.js', 'core.js', 'text/javascript; charset=utf-8'],
   [appAssetPath, 'app.js', 'text/javascript; charset=utf-8'],
   ['/app.js', 'app.js', 'text/javascript; charset=utf-8'],
   ['/sample-promotions.txt', 'sample-promotions.txt', 'text/plain; charset=utf-8'],
