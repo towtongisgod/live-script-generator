@@ -3,43 +3,71 @@
 <head>
   <meta charset="utf-8" />
   <meta name="viewport" content="width=device-width,initial-scale=1" />
-  <title>Auto Script Generator</title>
-  <link rel="stylesheet" href="styles.css" />
+  <title>August 2026 Live Script Generator</title>
+  <link rel="stylesheet" href="styles.css?v=20260803-abc" />
   <script src="https://cdn.jsdelivr.net/npm/tesseract.js@5/dist/tesseract.min.js"></script>
 </head>
 <body>
   <main class="container">
     <header>
-      <nav id="brandTabs" class="brand-tabs" aria-label="เลือกแบรนด์"></nav>
-      <h1 id="pageTitle">SKINOXY Auto Script Generator</h1>
-      <p id="pageDescription">วางโปรโมชั่นหลายรายการเป็นก้อนเดียว ระบบจะแยกโปรและสร้างสคริปต์ TikTok Live 3 Session ต่อโปรโมชั่น โดยแต่ละ Session อ่านขายได้ประมาณ 2-3 นาที</p>
+      <p class="eyebrow">August 2026 Script Pattern Lab</p>
+      <h1 id="pageTitle">Live Script Generator</h1>
+      <p id="pageDescription">เลือก Account, วันเวลาไลฟ์ และให้ระบบกำหนด Pattern A/B/C ตามแผนทดลองเดือน August</p>
     </header>
 
     <section class="panel">
-      <label for="rawInput">ข้อมูลโปรโมชั่นดิบ</label>
-      <textarea id="rawInput" rows="14" placeholder="วางข้อมูลโปรโมชั่นที่นี่..."></textarea>
-      <div class="actions">
-        <button id="loadSample">โหลดตัวอย่าง</button>
-        <button id="uploadImage" type="button">📷 ถอดข้อความจากรูป</button>
-        <input type="file" id="imageInput" accept="image/*" hidden />
-        <label class="strategy-select-label">
-          วิธีขาย
-          <select id="strategySelect">
-            <option value="advisor">A — Advisor (ที่ปรึกษา)</option>
-            <option value="bestie">B — Bestie (เพื่อนแนะนำเพื่อน)</option>
-            <option value="closer">C — Closer (ปิดการขาย)</option>
+      <div class="workflow-grid">
+        <label>
+          Account
+          <select id="accountSelect"></select>
+        </label>
+
+        <label>
+          Live Date
+          <input id="liveDate" type="date" />
+        </label>
+
+        <label>
+          Start Time
+          <input id="startTime" type="time" />
+        </label>
+
+        <label class="toggle-line">
+          <input type="checkbox" id="autoPattern" checked />
+          Auto-select Pattern
+        </label>
+
+        <label>
+          Manual Override
+          <select id="manualPattern">
+            <option value="">ใช้ Pattern อัตโนมัติ</option>
+            <option value="A">A — Diagnose & Educate</option>
+            <option value="B">B — Lifestyle & Engagement</option>
+            <option value="C">C — Value & Closing</option>
           </select>
         </label>
-        <button id="generate" class="primary">Generate Script</button>
-        <button id="copyAll">Copy All</button>
       </div>
+
+      <div id="assignmentPanel" class="assignment-panel" aria-live="polite"></div>
+
+      <div class="pattern-preview" aria-label="Pattern Preview">
+        <div class="pattern-card pattern-a"><strong>A</strong><span>วิเคราะห์ปัญหา → ให้ข้อมูล → แนะนำ</span></div>
+        <div class="pattern-card pattern-b"><strong>B</strong><span>สถานการณ์ → ความรู้สึก → ชวนคุย → เชื่อมสินค้า</span></div>
+        <div class="pattern-card pattern-c"><strong>C</strong><span>โปร → ความคุ้มค่า → แก้ข้อกังวล → ปิดการขาย</span></div>
+      </div>
+
+      <label for="rawInput" class="input-label">Promotion Text หรือข้อความจากรูป</label>
+      <textarea id="rawInput" rows="13" placeholder="วางข้อมูลโปรโมชั่นที่นี่..."></textarea>
+
       <div class="actions">
-        <label class="ab-toggle">
-          <input type="checkbox" id="sellingStrategyMode" />
-          สร้าง 3 วิธีขาย (Advisor / Bestie / Closer)
-        </label>
-        <span class="strategy-hint">ใช้ข้อมูลโปรโมชั่นเดียวกัน แต่เปลี่ยนวิธีขายเป็น Advisor, Bestie และ Closer — เหมาะสำหรับสร้างสคริปต์ไปทดสอบ A/B/C ในไลฟ์</span>
+        <button id="loadSample">โหลดตัวอย่าง</button>
+        <button id="uploadImage" type="button">ถอดข้อความจากรูป</button>
+        <input type="file" id="imageInput" accept="image/*" hidden />
+        <button id="generateAssigned" class="primary">Generate Assigned Pattern</button>
+        <button id="generateAll" type="button">Generate All A/B/C for Review</button>
+        <button id="copyAll">Copy All Scripts</button>
       </div>
+      <p class="review-warning">Generate All A/B/C ใช้สำหรับรีวิว ไม่ควรให้ MC สลับ Pattern ใน Session ที่กำลังทดสอบ</p>
       <p id="status" class="status"></p>
     </section>
 
@@ -59,7 +87,11 @@
       </div>
     </div>
   </main>
-  <script src="core.js"></script>
-  <script src="app.js"></script>
+  <script src="config/accounts.js?v=20260803-abc"></script>
+  <script src="config/personas.js?v=20260803-abc"></script>
+  <script src="config/patterns.js?v=20260803-abc"></script>
+  <script src="config/august-test-plan.js?v=20260803-abc"></script>
+  <script src="core.js?v=20260803-abc"></script>
+  <script src="app.js?v=20260803-abc"></script>
 </body>
 </html>

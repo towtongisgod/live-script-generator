@@ -3,6 +3,28 @@
 // DOM/UI code (event listeners, render(), OCR/crop) stays in app.js — do not add DOM
 // access here, it must stay Node-testable.
 
+function loadConfigConstant(globalName, requirePath, fallback){
+  if (typeof globalThis !== 'undefined' && globalThis[globalName]) return globalThis[globalName];
+  if (typeof module !== 'undefined' && module.exports && typeof require !== 'undefined') {
+    try {
+      return require(requirePath);
+    } catch (error) {
+      return fallback;
+    }
+  }
+  return fallback;
+}
+
+const LSG_ACCOUNTS = loadConfigConstant('LSG_ACCOUNTS', './config/accounts.js', []);
+const SELLING_PATTERNS = loadConfigConstant('SELLING_PATTERNS', './config/patterns.js', {});
+const PERSONA_CONFIG = loadConfigConstant('PLATFORM_PERSONAS', './config/personas.js', {});
+const PLATFORM_PERSONAS = PERSONA_CONFIG.PLATFORM_PERSONAS || PERSONA_CONFIG || {};
+const BRAND_PERSONAS = PERSONA_CONFIG.BRAND_PERSONAS || (typeof globalThis !== 'undefined' ? globalThis.BRAND_PERSONAS : {}) || {};
+const AUDIENCE_PROFILES = PERSONA_CONFIG.AUDIENCE_PROFILES || (typeof globalThis !== 'undefined' ? globalThis.AUDIENCE_PROFILES : {}) || {};
+const AUGUST_CONFIG = loadConfigConstant('AUGUST_TEST_PLAN', './config/august-test-plan.js', {});
+const resolveAssignedPatternFromConfig = AUGUST_CONFIG.resolveAssignedPattern
+  || (typeof globalThis !== 'undefined' ? globalThis.resolveAugustAssignedPattern : null);
+
 function normalizeText(text){
   return String(text)
     .replace(/\r/g, '')
@@ -108,6 +130,24 @@ function extractGift(text, knowledge){
   return null;
 }
 
+function extractRights(text){
+  const match = String(text || '').match(/(?:จำนวน\s*)?(?:สิทธิ์|สิทธิ|จำกัด)\s*(?:เพียง|แค่)?\s*([\d,]+)\s*(?:สิทธิ์|สิทธิ|ชุด|เซต|คน)?/i);
+  return match ? normalizeMoney(match[1]) : null;
+}
+
+function extractLiveOnly(text){
+  return /live\s*only|เฉพาะ\s*ไลฟ์|ในไลฟ์นี้|ราคาไลฟ์|โปรไลฟ์/i.test(String(text || ''));
+}
+
+function extractPromoDates(text){
+  const value = String(text || '');
+  const matches = [
+    ...value.matchAll(/(?:วันที่|ถึง|ตั้งแต่)\s*([0-3]?\d[\/.-][01]?\d(?:[\/.-]\d{2,4})?)/g),
+    ...value.matchAll(/([0-3]?\d\s*(?:ม\.ค\.|ก\.พ\.|มี\.ค\.|เม\.ย\.|พ\.ค\.|มิ\.ย\.|ก\.ค\.|ส\.ค\.|ก\.ย\.|ต\.ค\.|พ\.ย\.|ธ\.ค\.))/g)
+  ];
+  return matches.map(match => cleanupPhrase(match[1])).filter(Boolean);
+}
+
 function extractPromotionTitle(prePriceText){
   const lines = String(prePriceText || '')
     .split('\n')
@@ -148,8 +188,7 @@ function extractItemCount(rawText, mainProductText, matchedProducts = [], knowle
   if (direct) return Number(direct[1]);
   if (/เซตคู่|คู่/i.test(text)) return 2;
 
-  const uniqueProductIds = new Set((matchedProducts || []).map(item => item.product?.id).filter(Boolean));
-  return uniqueProductIds.size || null;
+  return null;
 }
 
 function extractDgmrMainItemCount(text){
@@ -552,8 +591,14 @@ function splitPromotions(raw){
     .filter(Boolean);
 }
 
+function findAccountConfig(brandOrId){
+  const id = typeof brandOrId === 'string' ? brandOrId : brandOrId?.id;
+  return LSG_ACCOUNTS.find(account => account.id === id) || (typeof brandOrId === 'object' ? brandOrId : null) || null;
+}
+
 function parsePromotion(text, index, knowledge, brand = null, style = null){
   const cleaned = normalizeText(text);
+  const account = findAccountConfig(brand);
   const prePriceText = extractPrePriceText(cleaned);
   const mainProductText = cleanupPhrase(prePriceText) || cleaned;
   const quantityTiers = extractQuantityTiers(cleaned);
@@ -580,6 +625,9 @@ function parsePromotion(text, index, knowledge, brand = null, style = null){
   const giftValue = moneyAfter(cleaned, [/มูลค่า\s*([\d,]+(?:\.\d+)?)/i]);
   const giftCount = extractGiftCount(gift);
   const limited = /จำนวน\s*จำกัด|limited/i.test(cleaned);
+  const rights = extractRights(cleaned);
+  const liveOnly = extractLiveOnly(cleaned);
+  const promoDates = extractPromoDates(cleaned);
   const matchedProducts = findProducts(cleaned, knowledge?.products || []);
   const matchedProduct = findProduct(mainProductText, knowledge?.products || [])
     || matchedProducts[0]?.product
@@ -601,9 +649,16 @@ function parsePromotion(text, index, knowledge, brand = null, style = null){
 
   return {
     index: index + 1,
-    brandId: knowledge?.brand_id || brand?.id || 'skinoxy',
+    accountId: account?.id || brand?.id || knowledge?.brand_id || 'skinoxy',
+    accountCode: account?.account_code || brand?.account_code || 'SKN-TT',
+    accountLabel: account?.label || brand?.label || knowledge?.brand || 'SKINOXY',
+    platform: account?.platform || brand?.platform || 'tiktok',
+    brandKey: account?.brand_key || brand?.brand_key || (knowledge?.brand_id === 'kmb' ? 'kiss' : (knowledge?.brand_id || 'skinoxy')),
+    knowledgeBrandId: account?.knowledge_brand_id || knowledge?.brand_id || brand?.id || 'skinoxy',
+    brandId: knowledge?.brand_id || account?.knowledge_brand_id || brand?.id || 'skinoxy',
     brandName: knowledge?.brand || brand?.label || 'SKINOXY',
     brandShort: knowledge?.brand_short || brand?.label || knowledge?.brand || 'SKINOXY',
+    account,
     brand,
     style,
     knowledge,
@@ -620,6 +675,7 @@ function parsePromotion(text, index, knowledge, brand = null, style = null){
     variantNote: variantInfo.variantNote,
     selectedFragrances,
     gift,
+    gifts: gift ? [{ name: gift, value: giftValue, count: giftCount }] : [],
     giftValue,
     giftCount,
     regular,
@@ -633,6 +689,15 @@ function parsePromotion(text, index, knowledge, brand = null, style = null){
     averagePrice,
     totalCount,
     averageIncludingGift,
+    products: matchedProducts.map(item => ({
+      id: item.product?.id || null,
+      name: item.product?.name || null,
+      variants: item.matchedVariants || []
+    })),
+    rights,
+    liveOnly,
+    promoDates,
+    notes: [],
     promotionType,
     sellingAngle,
     limited,
@@ -648,15 +713,23 @@ function parsePromotion(text, index, knowledge, brand = null, style = null){
 // ---------------------------------------------------------------------------
 function buildProductTruth(p){
   return {
+    account: p.accountId,
+    accountLabel: p.accountLabel,
+    accountCode: p.accountCode,
+    brand: p.brandKey || p.brandId,
     brandId: p.brandId,
     brandName: p.brandName,
+    platform: p.platform,
     title: p.title,
+    promotion_title: p.title,
     mainProductText: p.mainProductText,
     items: formatItemsInSet(p),
+    products: p.products || [],
     productId: p.product ? p.product.id : null,
     productName: p.product ? p.product.name : null,
     selectedVariantIds: (p.selectedVariants || []).map(v => v.id).filter(Boolean),
     allVariantsSelected: p.allVariantsSelected,
+    normalPrice: p.regular,
     regular: p.regular,
     promoPrice: p.promoPrice,
     coupon: p.coupon,
@@ -665,10 +738,17 @@ function buildProductTruth(p){
     discountPercent: p.discountPercent,
     quantityTiers: p.quantityTiers,
     gift: p.gift,
+    gifts: p.gifts || [],
     giftValue: p.giftValue,
     giftCount: p.giftCount,
+    quantity: p.quantity,
     itemCount: p.itemCount,
     totalCount: p.totalCount,
+    rights: p.rights,
+    liveOnly: p.liveOnly,
+    promoDates: p.promoDates || [],
+    notes: p.notes || [],
+    rawText: p.raw,
     limited: p.limited,
     promotionTypeId: p.promotionType?.id || null
   };
@@ -677,28 +757,26 @@ function buildProductTruth(p){
 // ---------------------------------------------------------------------------
 // Selling Strategy meta (used by app.js to label the UI — not spoken text)
 // ---------------------------------------------------------------------------
-const STRATEGIES = ['advisor', 'bestie', 'closer'];
+const STRATEGIES = ['A', 'B', 'C'];
 
-const STRATEGY_META = {
-  advisor: {
-    letter: 'A',
-    name: 'Advisor',
-    thai: 'ที่ปรึกษา / แก้ปัญหา',
-    description: 'ขายผ่านการช่วยวิเคราะห์ปัญหาและแนะนำสินค้าให้เหมาะกับลูกค้า'
-  },
-  bestie: {
-    letter: 'B',
-    name: 'Bestie',
-    thai: 'เพื่อนแนะนำเพื่อน',
-    description: 'ขายผ่านภาพชีวิตประจำวัน ความรู้สึก และประสบการณ์แบบเพื่อนคุยกัน'
-  },
-  closer: {
-    letter: 'C',
-    name: 'Closer',
-    thai: 'ปิดการขาย',
-    description: 'ขายผ่านความคุ้ม ราคา และเหตุผลให้ตัดสินใจซื้อตอนนี้'
-  }
+const STRATEGY_ALIASES = {
+  advisor: 'A',
+  bestie: 'B',
+  closer: 'C',
+  diagnose: 'A',
+  lifestyle: 'B',
+  value: 'C'
 };
+
+const STRATEGY_META = Object.fromEntries(STRATEGIES.map(key => {
+  const pattern = SELLING_PATTERNS[key] || {};
+  return [key, {
+    letter: key,
+    name: pattern.short_name || key,
+    thai: pattern.style || '',
+    description: pattern.objective || ''
+  }];
+}));
 
 // ---------------------------------------------------------------------------
 // SKINOXY — shared fact-speech helpers (strategy-agnostic; reused by all 3)
@@ -1484,26 +1562,417 @@ ${buildSession(3, 'ปิดการขายย้ำหลายจุด', [
 }
 
 // ---------------------------------------------------------------------------
+// August 2026 script pipeline — Product Truth + Pattern + Brand/Platform persona
+// ---------------------------------------------------------------------------
+function normalizePatternKey(pattern){
+  const value = String(pattern || '').trim();
+  const upper = value.toUpperCase();
+  if (STRATEGIES.includes(upper)) return upper;
+  return STRATEGY_ALIASES[value.toLowerCase()] || null;
+}
+
+function getPattern(patternKey){
+  const key = normalizePatternKey(patternKey) || 'A';
+  return SELLING_PATTERNS[key] || {
+    key,
+    label: `${key}`,
+    short_name: key,
+    style: '',
+    objective: '',
+    sequence: []
+  };
+}
+
+function getAccountFromPromotion(p){
+  return findAccountConfig(p.accountId || p.brand?.id) || p.account || {
+    id: p.accountId || p.brandId,
+    label: p.accountLabel || p.brandName,
+    account_code: p.accountCode || 'SCRIPT',
+    brand_key: p.brandKey || getBrandKey(p.brandId),
+    platform: p.platform || 'tiktok'
+  };
+}
+
+function resolveAssignedPattern(args = {}){
+  const resolved = typeof resolveAssignedPatternFromConfig === 'function'
+    ? resolveAssignedPatternFromConfig(args)
+    : {
+      assigned_pattern: normalizePatternKey(args.manualPattern) || 'A',
+      pattern_source: args.manualPattern ? 'MANUAL' : 'AUTO',
+      test_block: 'Manual',
+      block_id: 'check',
+      include_in_experiment: false,
+      needs_manual: false,
+      warning: null
+    };
+  const pattern = getPattern(resolved.assigned_pattern || args.manualPattern || 'A');
+  return {
+    ...resolved,
+    assigned_pattern: resolved.assigned_pattern || normalizePatternKey(args.manualPattern),
+    pattern_style: pattern.style || null
+  };
+}
+
+function getCommunicationProfile(account, platform, testBlock){
+  const block = String(testBlock || '').toLowerCase();
+  let key = 'daytime';
+  if (block.includes('pre-test')) key = 'pretest';
+  else if (block.includes('check')) key = 'check';
+  else if (block.includes('10') || block.includes('morning')) key = 'morning';
+  else if (block.includes('14') || block.includes('afternoon')) key = 'afternoon';
+  else if (block.includes('19') || block.includes('evening')) key = 'evening';
+  else if (block.includes('prime') || block.includes('late')) key = 'prime';
+  else if (block.includes('day')) key = 'daytime';
+  return AUDIENCE_PROFILES[key] || AUDIENCE_PROFILES.daytime || { label: 'Daytime', communication: [] };
+}
+
+function createScriptId(p, metadata){
+  const account = getAccountFromPromotion(p);
+  const date = String(metadata.live_date || '').replace(/-/g, '') || 'nodate';
+  const time = String(metadata.start_time || '').replace(':', '') || 'notime';
+  const index = String(p.index || 1).padStart(3, '0');
+  return `${account.account_code || 'SCRIPT'}-${date}-${time}-${metadata.assigned_pattern || 'NA'}-${index}`;
+}
+
+function formatCompactPriceTruth(p){
+  if (p.quantityTiers?.length >= 2) return buildTierPriceSpeech(p);
+  const lines = [];
+  if (p.regular) lines.push(`ราคาปกติ ${formatMoney(p.regular)} บาท`);
+  if (p.promoPrice) lines.push(`ราคาโปร ${formatMoney(p.promoPrice)} บาท`);
+  if (p.coupon) lines.push(`มีคูปองลดเพิ่ม ${p.coupon}% ตามข้อมูลโปร`);
+  if (p.finalPrice && p.finalPriceSource === 'explicit') lines.push(`ราคาหลังส่วนลดที่ระบุคือ ${formatMoney(p.finalPrice)} บาท`);
+  return lines.join(' ');
+}
+
+function getDiscountSpeech(p){
+  if (!p.regular || !p.promoPrice || !p.discount) return '';
+  return `ส่วนต่างจากราคาปกติอยู่ที่ ${formatMoney(p.discount)} บาท หรือประมาณ ${formatPercent(p.discountPercent)}`;
+}
+
+function getAverageSpeech(p){
+  if (!p.promoPrice || !p.itemCount) return '';
+  return `เมื่อหารตามจำนวนสินค้าหลักที่ระบุ เฉลี่ยชิ้นละ ${formatMoney(p.averagePrice)} บาท`;
+}
+
+function getGiftSpeech(p){
+  return p.gift ? `โปรนี้มีของแถมเป็น ${formatGiftLine(p)}` : '';
+}
+
+function getMainItemsSpeech(p){
+  return formatItemsForSpeech(p) || p.mainProductText || 'สินค้าในโปรนี้';
+}
+
+function getBrandSpecificAngles(p){
+  const brandKey = p.brandKey || getBrandKey(p.brandId);
+  if (brandKey === 'kiss') {
+    const fragrance = getPrimaryFragrance(p);
+    return {
+      problem: fragrance
+        ? `หลายคนเลือกกลิ่นจากความชอบตอนดมครั้งแรก แต่พอใช้จริงอาจไม่เข้ากับ Mood หรือโอกาสที่ใช้ กลิ่น ${fragrance.name} ในโปรนี้ให้ภาพเป็น ${formatMood(fragrance)} และเหมาะกับ ${formatOccasion(fragrance)}`
+        : 'ถ้ายังเลือกกลิ่นไม่ถูก ให้เริ่มจาก Mood ที่อยากได้และโอกาสที่จะใช้จริงก่อน',
+      choice: buildKmbMoodChoicesSpeech(p),
+      product: buildKmbProductRoleSpeech(p),
+      experience: fragrance
+        ? `ภาพการใช้คือเลือกกลิ่น ${fragrance.name} ให้เป็นกลิ่นหลักของวัน แล้วค่อยเสริม Routine เฉพาะสินค้าที่อยู่ในเซ็ต`
+        : 'ให้เลือกกลิ่นหรือเซ็ตที่ตรงกับ Mood ของวันและเช็กรายละเอียดในตะกร้า',
+      fit: 'เหมาะกับคนที่อยากเลือกกลิ่นให้เข้ากับบุคลิก โอกาสใช้งาน และความคุ้มของเซ็ต'
+    };
+  }
+
+  if (brandKey === 'dgmr') {
+    return {
+      problem: buildDgmrPainPointSpeech(p),
+      choice: buildDgmrConcernChoiceSpeech(p),
+      product: buildDgmrProductRoles(p),
+      experience: buildDgmrRoutineLine(p),
+      fit: 'เหมาะกับคนที่อยากจัด Routine ดูแลเส้นผมและหนังศีรษะให้ครบขึ้นตามสินค้าที่อยู่ในโปร'
+    };
+  }
+
+  return {
+    problem: buildSkinoxyPainPointSpeech(p),
+    choice: buildSkinoxyChoiceSpeech(p),
+    product: p.product ? `${p.product.name} เป็นตัวหลักในโปรนี้ ให้เลือกสูตรตามปัญหาผิวที่เจอจริง` : 'ให้ยึดรายละเอียดสินค้าในตะกร้าเป็นหลัก',
+    experience: listForSpeech(getSkinoxyBenefits(p).slice(0, 4), 'ดูแลผิวตาม Routine ที่เลือก'),
+    fit: 'เหมาะกับคนที่อยากเลือกบอดี้แคร์หรือสกินแคร์ตามปัญหาผิวและใช้เป็น Routine ต่อเนื่อง'
+  };
+}
+
+function getPlatformCta(platform, patternKey){
+  if (platform === 'shopee') return patternKey === 'C' ? 'เข้าไปดูเซ็ตในตะกร้าแล้วตัดสินใจจากราคาและตัวเลือกได้เลย' : 'เข้าไปดูเซ็ตในตะกร้าแล้วเลือกสูตรหรือกลิ่นที่ตรงกับตัวเองได้เลย';
+  return patternKey === 'C' ? 'กดดูในตะกร้าแล้วเช็กรายละเอียดโปรนี้ได้เลย' : 'กดดูในตะกร้าแล้วเลือกสินค้าที่ตรงกับตัวเองได้เลย';
+}
+
+function getPatternLead(patternKey, brandKey, platform, variant){
+  const pools = {
+    A: [
+      'ก่อนเลือกซื้อ ลองเช็กปัญหาหลักของตัวเองให้ชัดก่อน',
+      'เริ่มจากคำถามง่ายๆ ว่าตอนนี้ต้องการแก้เรื่องไหนมากที่สุด',
+      'อย่าเพิ่งเลือกจากชื่อโปรอย่างเดียว ลองดูว่าตัวนี้ตอบโจทย์อะไรจริง'
+    ],
+    B: [
+      'ลองนึกภาพสถานการณ์ที่ใช้จริงในชีวิตประจำวันก่อน',
+      'ถ้าอยากให้การเลือกสินค้าง่ายขึ้น ลองมองจากโมเมนต์ที่เราเจอบ่อยๆ',
+      'วันนี้ขอเล่าแบบเพื่อนชวนเลือกของที่ใช้ได้จริง'
+    ],
+    C: [
+      'โปรนี้เข้าเรื่องความคุ้มก่อนเลย',
+      'ถ้ากำลังเทียบว่าเซ็ตไหนคุ้มกว่า ให้ดูตัวเลขชุดนี้ก่อน',
+      'รอบนี้ดูจากสิ่งที่ได้ ราคา และเหตุผลที่ควรกดดูตอนนี้'
+    ]
+  };
+  const platformTail = platform === 'shopee'
+    ? ' เพราะคนที่ดูใน Shopee มักอยากเห็นของที่ได้และราคาชัดเร็ว'
+    : ' เพราะในไลฟ์ต้องทำให้คนดูหยุดฟังและรู้สึกว่าเกี่ยวกับตัวเองก่อน';
+  const base = pools[patternKey] || pools.A;
+  return `${base[variant % base.length]}${platformTail}`;
+}
+
+function buildPatternAScript(p, context){
+  const angles = getBrandSpecificAngles(p);
+  const price = formatCompactPriceTruth(p);
+  const gift = getGiftSpeech(p);
+  const platform = context.platformPersona;
+  return joinSentences([
+    getPatternLead('A', context.brandKey, context.platform, context.hookVariant || 0),
+    context.platform === 'shopee'
+      ? `โปรนี้คือ ${getMainItemsSpeech(p)} ก่อนกดซื้อ ลองเช็กให้ชัดว่าตรงกับปัญหาหรือสิ่งที่ต้องการจริงไหม`
+      : `${angles.problem}`,
+    context.platform === 'shopee'
+      ? angles.problem
+      : 'ลองสังเกตตัวเองก่อนว่าอาการหรือความต้องการหลักตอนนี้คืออะไร เพราะการเลือกจากปัญหาจริงจะช่วยให้ตัดสินใจง่ายกว่าเลือกจากชื่อโปรอย่างเดียว',
+    `วิธีคิดง่ายๆ คือแยกก่อนว่าสิ่งที่ต้องการคือเรื่องไหน แล้วค่อยเทียบกับตัวเลือกในโปร ${angles.choice}`,
+    `สินค้าที่อยู่ในโปรนี้คือ ${getMainItemsSpeech(p)} ${angles.product}`,
+    `ถ้าจะเลือกให้ตรง ให้เริ่มจากตัวที่ตอบโจทย์หลักก่อน แล้วค่อยดูรายละเอียดในตะกร้าให้ครบตามข้อมูลสินค้า`,
+    price ? `ส่วนโปรโมชันที่ยืนยันได้คือ ${price}` : 'ส่วนราคาในโปรนี้ยังไม่ครบพอสำหรับการคำนวณ ให้เช็กราคาในตะกร้าก่อนตัดสินใจ',
+    gift,
+    `${platform.rules?.cta || 'กดดูในตะกร้า'} ${getPlatformCta(context.platform, 'A')}`
+  ]);
+}
+
+function buildPatternBScript(p, context){
+  const angles = getBrandSpecificAngles(p);
+  const price = formatCompactPriceTruth(p);
+  const gift = getGiftSpeech(p);
+  const scene = context.platform === 'shopee'
+    ? `ถ้ากำลังเลื่อนดูโปรและเทียบว่าเซ็ตไหนคุ้มกว่า เซ็ตนี้คือ ${getMainItemsSpeech(p)}`
+    : `นึกภาพวันที่อยากให้ Routine ง่ายขึ้น แล้วมี ${getMainItemsSpeech(p)} เตรียมไว้ในตะกร้า`;
+  return joinSentences([
+    getPatternLead('B', context.brandKey, context.platform, context.hookVariant || 0),
+    scene,
+    `โมเมนต์ที่คนดูน่าจะเข้าใจคืออยากได้ตัวที่เลือกง่าย ใช้ได้จริง และรู้สึกว่าซื้อแล้วไม่หลงทาง`,
+    context.platform === 'tiktok'
+      ? 'ใครกำลังลังเลอยู่ ลองคอมเมนต์สิ่งที่ตัวเองอยากแก้หรือ Mood ที่อยากได้ไว้ได้เลย จะได้ช่วยเทียบให้ตรงขึ้น'
+      : 'ถ้ากำลังเลือกใน Shopee ให้ดูว่าเซ็ตนี้ตรงกับสูตร กลิ่น หรือ Routine ที่อยากได้ไหมก่อน',
+    `ตัวที่เชื่อมกับสถานการณ์นี้คือ ${getMainItemsSpeech(p)} ${angles.experience}`,
+    `ประสบการณ์ที่คาดหวังได้โดยไม่พูดเกินข้อมูลคือเลือกให้ตรงกับสิ่งที่ต้องการ แล้วใช้ตาม Routine หรือโอกาสที่เหมาะกับสินค้าในโปร`,
+    price ? `รายละเอียดโปรที่ต้องจำคือ ${price}` : 'ถ้าราคายังไม่ครบ ให้กดเข้าไปเช็กราคาในตะกร้าเป็นหลัก',
+    gift,
+    getPlatformCta(context.platform, 'B')
+  ]);
+}
+
+function buildPatternCScript(p, context){
+  const angles = getBrandSpecificAngles(p);
+  const price = formatCompactPriceTruth(p);
+  const discount = getDiscountSpeech(p);
+  const average = getAverageSpeech(p);
+  const gift = getGiftSpeech(p);
+  return joinSentences([
+    getPatternLead('C', context.brandKey, context.platform, context.hookVariant || 0),
+    `โปรนี้เริ่มจากความคุ้มก่อนเลย ได้ ${getMainItemsSpeech(p)}${p.gift ? ` และ ${formatGiftLine(p)}` : ''}`,
+    price ? `ตัวเลขที่ยืนยันได้คือ ${price}` : 'ตอนนี้ข้อมูลราคายังไม่ครบพอสำหรับการสรุปส่วนลด ให้เช็กในตะกร้าก่อน',
+    discount,
+    average,
+    `${angles.fit}`,
+    `ข้อกังวลก่อนซื้อให้ดูที่ตัวเลือกในตะกร้า ถ้าโปรไม่ได้ระบุสูตร กลิ่น หรือ Series ชัดเจน ให้เลือกจากปัญหา Mood หรือ Routine ที่ตรงกับตัวเอง และไม่ต้องเดาว่าได้ครบทุกสูตร`,
+    p.liveOnly ? 'ข้อมูลโปรระบุว่าเกี่ยวกับไลฟ์นี้ ให้เช็กเงื่อนไขในตะกร้าตามเวลาจริงอีกครั้ง' : '',
+    p.rights ? `ข้อมูลระบุจำนวนสิทธิ์ ${formatMoney(p.rights)} ให้ตัดสินใจจากข้อมูลจริงที่เห็นในตะกร้า` : '',
+    gift,
+    `เหตุผลที่ควรกดดูตอนนี้คือจะได้เห็นราคา ตัวเลือก และเงื่อนไขล่าสุดในตะกร้า ${getPlatformCta(context.platform, 'C')}`
+  ]);
+}
+
+function buildDepthAddendum(p, patternKey, context){
+  const brandPersona = context.brandPersona || {};
+  const platformPersona = context.platformPersona || {};
+  const profile = context.communicationProfile || {};
+  const topics = (brandPersona.topics || []).slice(0, 4);
+  const topicLine = topics.length
+    ? `จุดที่ควรจับให้ชัดในบทนี้คือ ${listForSpeech(topics)} โดยเล่าเฉพาะสิ่งที่สินค้าและโปรนี้มีข้อมูลรองรับ`
+    : 'จุดที่ควรจับให้ชัดคือเลือกจากข้อมูลจริงในโปรและตะกร้า';
+  const profileLine = profile.communication?.length
+    ? `จังหวะการพูดของช่วงนี้ให้เน้น ${listForSpeech(profile.communication)} เพื่อให้คนดูตามทันและตัดสินใจได้ง่าย`
+    : '';
+  const truthLine = `ย้ำอีกครั้งว่าราคา ของแถม จำนวนชิ้น และตัวเลือก ต้องยึดตามข้อมูลที่ใส่เข้ามาเท่านั้น ถ้ารายละเอียดไหนไม่ระบุ ให้บอกให้คนดูกดดูในตะกร้าแทนการเดา`;
+
+  if (patternKey === 'A') {
+    return joinSentences([
+      topicLine,
+      profileLine,
+      'เวลาช่วยเลือก ให้พูดเหมือนกำลังพาคนดูไล่เช็กทีละข้อ ไม่ตัดสินแทนลูกค้า และไม่ทำให้รู้สึกว่าปัญหาของตัวเองเป็นเรื่องแย่',
+      'ถ้าสินค้ามีหลายสูตร หลายกลิ่น หรือหลาย Series ให้ใช้ปัญหา Mood หรือ Routine เป็นตัวแยก แล้วชวนคนดูเลือกตัวที่ตรงที่สุด',
+      truthLine
+    ]);
+  }
+
+  if (patternKey === 'B') {
+    return joinSentences([
+      topicLine,
+      profileLine,
+      'ระหว่างเล่าให้เว้นจังหวะถามคนดู เช่นกำลังมองหาสูตรไหน กลิ่นแบบไหน หรือ Routine แบบไหน เพื่อให้บทไม่กลายเป็นการอ่านรายละเอียดอย่างเดียว',
+      'เมื่อต้องพูดราคา ให้โยงกลับไปที่การใช้งานจริงก่อนเสมอ เพราะ Pattern นี้ต้องทำให้สินค้ารู้สึกอยากมี ไม่ใช่แค่ถูกกว่าปกติ',
+      truthLine
+    ]);
+  }
+
+  return joinSentences([
+    topicLine,
+    profileLine,
+    'เวลาปิดการขาย ให้ช่วยคนดูลดความลังเลด้วยข้อมูลที่ตรวจได้ เช่น ได้อะไรบ้าง ราคาไหนถูกระบุไว้ และต้องเลือกตัวเลือกตรงไหนในตะกร้า',
+    'ถ้าคำนวณราคาต่อชิ้นหรือส่วนลดไม่ได้ เพราะข้อมูลจำนวนหรือราคายังไม่ครบ ให้พูดตรงๆ ว่าให้เช็กในตะกร้า แทนการคำนวณเอง',
+    truthLine
+  ]);
+}
+
+function buildMainSpokenScript(p, patternKey, context){
+  const builders = { A: buildPatternAScript, B: buildPatternBScript, C: buildPatternCScript };
+  const builder = builders[patternKey] || builders.A;
+  const base = builder(p, context);
+  const expanded = base.length < 1600
+    ? `${base} ${buildDepthAddendum(p, patternKey, context)}`
+    : base;
+  return enforceLanguageRules(expanded, p);
+}
+
+function buildPromotionSummary(p){
+  return [
+    `ชื่อโปร: ${p.title || 'ไม่ระบุชื่อโปร'}`,
+    `สินค้า: ${formatItemsInSet(p)}`,
+    `สูตร/กลิ่น: ${p.allVariantsSelected ? 'เลือกได้ทุกสูตร/กลิ่นที่ร่วมรายการ' : (formatVariantList(p.selectedVariants) || '-')}`,
+    `ราคา: ${formatPriceLines(p).join(', ') || 'ไม่มีข้อมูลราคา'}`,
+    `ของแถม: ${formatGiftLine(p)}`,
+    `Promotion Type: ${p.promotionType?.name || '-'}`
+  ];
+}
+
+function buildValidationNotes(p, assignment){
+  const notes = [];
+  if (!p.regular || !p.promoPrice) notes.push('ข้อมูลราคาไม่ครบ จึงไม่คำนวณเปอร์เซ็นต์ส่วนลดหรือสรุปส่วนลดเกินจริง');
+  if (!p.itemCount) notes.push('จำนวนชิ้นไม่ชัดเจน จึงไม่คำนวณราคาต่อชิ้น');
+  if (p.warning) notes.push(p.warning);
+  if (p.finalPriceSource === 'calculated') notes.push('มีคูปองแต่ไม่มีราคาหลังส่วนลดแบบระบุชัด จึงไม่ใช้ราคาสุดท้ายเป็นคำขายหลัก');
+  if (assignment?.warning) notes.push(assignment.warning);
+  return uniqueFilled(notes);
+}
+
+function formatFullScript(scriptPackage){
+  const metadataLines = Object.entries(scriptPackage.metadata).map(([key, value]) =>
+    `${key}: ${value === null || value === undefined || value === '' ? '-' : value}`
+  );
+  const notes = scriptPackage.validationNotes.length
+    ? scriptPackage.validationNotes.map(item => `- ${item}`).join('\n')
+    : '- ไม่มี';
+  return `# Script Metadata
+${metadataLines.join('\n')}
+
+# Promotion Summary
+${scriptPackage.promotionSummary.join('\n')}
+
+# Main Spoken Script
+${scriptPackage.mainSpokenScript}
+
+# Producer Push Line
+${scriptPackage.producerPushLine}
+
+# Validation Notes
+${notes}`;
+}
+
+function createScriptPackage(p, pattern = 'A', context = {}){
+  const account = getAccountFromPromotion(p);
+  const assignment = context.assignment || resolveAssignedPattern({
+    account,
+    platform: account.platform,
+    liveDate: context.liveDate,
+    startTime: context.startTime,
+    manualPattern: pattern,
+    autoPattern: context.patternSource !== 'MANUAL'
+  });
+  const patternKey = normalizePatternKey(pattern) || normalizePatternKey(assignment.assigned_pattern) || 'A';
+  const patternMeta = getPattern(patternKey);
+  const platform = account.platform || p.platform || 'tiktok';
+  const brandKey = account.brand_key || p.brandKey || getBrandKey(p.brandId);
+  const profile = getCommunicationProfile(account.id, platform, assignment.test_block);
+  const generatedAt = context.generatedAt || new Date().toISOString();
+  const metadata = {
+    script_id: '',
+    generated_at: generatedAt,
+    account: account.label || p.accountLabel || p.brandName,
+    brand: BRAND_PERSONAS[brandKey]?.label || p.brandName,
+    platform: PLATFORM_PERSONAS[platform]?.label || platform,
+    live_date: context.liveDate || assignment.live_date || '',
+    start_time: context.startTime || assignment.start_time || '',
+    test_block: assignment.test_block || '',
+    assigned_pattern: patternKey,
+    pattern_style: patternMeta.style,
+    pattern_source: assignment.pattern_source || context.patternSource || 'AUTO',
+    promotion_title: p.title || 'ไม่ระบุชื่อโปร',
+    script_version: 'august-2026-v1'
+  };
+  metadata.script_id = createScriptId(p, metadata);
+  const truth = buildProductTruth(p);
+  const mainSpokenScript = buildMainSpokenScript(p, patternKey, {
+    ...context,
+    platform,
+    brandKey,
+    pattern: patternMeta,
+    platformPersona: PLATFORM_PERSONAS[platform] || {},
+    brandPersona: BRAND_PERSONAS[brandKey] || {},
+    communicationProfile: profile,
+    assignment,
+    productTruth: truth
+  });
+  const producerPushLine = [
+    `${patternMeta.short_name}: ${patternMeta.copy_hint || patternMeta.objective}`,
+    `Account ${metadata.account} / ${metadata.test_block}`,
+    `ย้ำเฉพาะ Product Truth: ${formatCompactPriceTruth(p) || 'ราคาในตะกร้า'}`,
+    getPlatformCta(platform, patternKey)
+  ].filter(Boolean).join('\n');
+  const validationNotes = buildValidationNotes(p, assignment);
+  const scriptPackage = {
+    metadata,
+    productTruth: truth,
+    promotionSummary: buildPromotionSummary(p),
+    mainSpokenScript,
+    producerPushLine,
+    validationNotes,
+    pattern: patternMeta,
+    assignment,
+    structuralMarkers: patternMeta.marker_order || []
+  };
+  scriptPackage.fullText = formatFullScript(scriptPackage);
+  return scriptPackage;
+}
+
+// ---------------------------------------------------------------------------
 // Dispatcher
 // ---------------------------------------------------------------------------
-const BRAND_STRATEGY_BUILDERS = {
-  skinoxy: { advisor: buildSkinoxyAdvisorScript, bestie: buildSkinoxyBestieScript, closer: buildSkinoxyCloserScript },
-  kmb: { advisor: buildKmbAdvisorScript, bestie: buildKmbBestieScript, closer: buildKmbCloserScript },
-  dgmr: { advisor: buildDgmrAdvisorScript, bestie: buildDgmrBestieScript, closer: buildDgmrCloserScript }
-};
+const BRAND_STRATEGY_BUILDERS = {};
 
 function getBrandKey(brandId){
   if (brandId === 'dgmr') return 'dgmr';
-  if (brandId === 'kmb') return 'kmb';
+  if (brandId === 'kmb' || brandId === 'kiss') return 'kiss';
   return 'skinoxy';
 }
 
-function createScript(p, strategy = 'advisor', hookVariant = 0){
-  const brandKey = getBrandKey(p.brandId);
-  const strategyKey = STRATEGIES.includes(strategy) ? strategy : 'advisor';
-  const builder = BRAND_STRATEGY_BUILDERS[brandKey][strategyKey];
-  const script = builder(p, hookVariant);
-  return enforceLanguageRules(script, p);
+function createScript(p, strategy = 'A', hookVariant = 0, context = {}){
+  const patternKey = normalizePatternKey(strategy) || 'A';
+  const scriptPackage = createScriptPackage(p, patternKey, {
+    ...context,
+    hookVariant
+  });
+  return enforceLanguageRules(scriptPackage.fullText, p);
 }
 
 function enforceLanguageRules(script, p){
@@ -1538,6 +2007,8 @@ if (typeof module !== 'undefined' && module.exports) {
     formatAverageLine, formatAverageIncludingGiftLine, getPrimaryFragrance, formatMood,
     formatOccasion, formatItemsInSet, formatItemsForSpeech, joinSentences, uniqueFilled, listForSpeech, getBrandCharacter,
     buildSession, buildPriceSpeech, splitPromotions, parsePromotion, buildProductTruth,
-    STRATEGIES, STRATEGY_META, createScript, enforceLanguageRules, getBrandKey
+    LSG_ACCOUNTS, SELLING_PATTERNS, PLATFORM_PERSONAS, BRAND_PERSONAS, AUDIENCE_PROFILES,
+    STRATEGIES, STRATEGY_META, STRATEGY_ALIASES, normalizePatternKey, resolveAssignedPattern,
+    getCommunicationProfile, createScriptPackage, createScript, enforceLanguageRules, getBrandKey
   };
 }
