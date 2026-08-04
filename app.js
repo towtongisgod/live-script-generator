@@ -441,13 +441,18 @@ function render(promos, mode, assignment){
 
 function renderScriptCard(p, packageItem, mode){
   const card = document.createElement('article');
-  card.className = `card script-card pattern-${packageItem.metadata.assigned_pattern.toLowerCase()}`;
+  const pattern = packageItem.metadata.assignedPattern;
+  card.className = `card script-card pattern-${pattern.toLowerCase()}`;
   const metadataJson = JSON.stringify(packageItem.metadata, null, 2);
+  const script = packageItem.mainSpokenScript;
+  const sections = [script.section1, script.section2, script.section3];
   const exportJson = JSON.stringify({
     metadata: packageItem.metadata,
     productTruth: packageItem.productTruth,
     promotionSummary: packageItem.promotionSummary,
     mainSpokenScript: packageItem.mainSpokenScript,
+    qAndA: packageItem.qAndA,
+    policySafeGuide: packageItem.policySafeGuide,
     producerPushLine: packageItem.producerPushLine,
     producerNotes: packageItem.producerNotes,
     validationNotes: packageItem.validationNotes
@@ -456,13 +461,17 @@ function renderScriptCard(p, packageItem, mode){
   card.innerHTML = `
     <div class="card-header">
       <div>
-        <p class="brand-label">${escapeHtml(packageItem.metadata.account)} · Pattern ${escapeHtml(packageItem.metadata.assigned_pattern)}</p>
+        <p class="brand-label">${escapeHtml(packageItem.metadata.account)} · Pattern ${escapeHtml(pattern)} · ${escapeHtml(packageItem.metadata.estimatedSpeakingTime || '')}</p>
         <h2>โปรโมชั่นที่ ${p.index}: ${escapeHtml(p.title || 'ไม่ระบุชื่อโปร')}</h2>
       </div>
       <div class="card-actions">
-        <button class="generate-again" data-promo-index="${p.index}" data-pattern="${packageItem.metadata.assigned_pattern}">Generate Again</button>
-        <button class="copy-main">Copy Script</button>
+        <button class="generate-again" data-promo-index="${p.index}" data-pattern="${pattern}">Generate Again</button>
+        <button class="copy-main">Copy Full Pattern</button>
+        <button class="copy-shortloop">Copy Short Loop</button>
+        <button class="copy-truth">Copy Product Truth</button>
         <button class="copy-metadata">Copy Metadata</button>
+        <button class="copy-form">Copy All as Form</button>
+        <button class="print-form">Print / Form View</button>
         <button class="export-json">Export JSON</button>
       </div>
     </div>
@@ -478,27 +487,89 @@ function renderScriptCard(p, packageItem, mode){
       <p>${escapeHtml(packageItem.promotionSummary.join(' · '))}</p>
     </div>
 
-    <div class="main-copy-box">
-      <h3>Main Spoken Script</h3>
-      <pre class="main-script-output">${escapeHtml(packageItem.mainSpokenScript)}</pre>
+    <div class="section-tabs" role="tablist">
+      ${sections.map((section, index) => `
+        <button type="button" class="section-tab${index === 0 ? ' active' : ''}" data-section-index="${index}">
+          Section ${index + 1}: ${escapeHtml(section.title)}${section.estimatedMinutes != null ? ` (~${section.estimatedMinutes} นาที)` : ''}
+        </button>
+      `).join('')}
     </div>
 
+    ${sections.map((section, index) => `
+      <div class="main-copy-box section-panel" data-section-index="${index}" ${index === 0 ? '' : 'hidden'}>
+        <div class="section-panel-header">
+          <h3>Section ${index + 1}: ${escapeHtml(section.title)}</h3>
+          <button class="copy-section" data-section-index="${index}">Copy Section ${index + 1}</button>
+        </div>
+        <pre class="main-script-output">${escapeHtml(section.text)}</pre>
+        ${section.warning ? `<p class="section-warning">⚠ ${escapeHtml(section.warning)}</p>` : ''}
+      </div>
+    `).join('')}
+
     <details class="supporting-copy">
-      <summary>Producer Push Line, Producer Notes และ Validation Notes</summary>
+      <summary>Short Loop, Q&amp;A, Policy-Safe Guide, Producer Notes และ Validation Notes</summary>
+      <h4>Short Loop (30s)</h4>
+      <pre>${escapeHtml(script.shortLoop30)}</pre>
+      <h4>Short Loop (90s)</h4>
+      <pre>${escapeHtml(script.shortLoop90)}</pre>
+      <h4>Q&amp;A</h4>
+      <pre>${escapeHtml((packageItem.qAndA || []).map(item => `Q: ${item.question}\nA: ${item.answer}`).join('\n\n') || 'ไม่มี')}</pre>
+      <h4>Policy-Safe Guide</h4>
+      <pre>${escapeHtml((packageItem.policySafeGuide || []).join('\n') || 'ไม่มี')}</pre>
+      <h4>Producer Push Line</h4>
       <pre>${escapeHtml(packageItem.producerPushLine)}</pre>
+      <h4>Producer Notes</h4>
       <pre>${escapeHtml(packageItem.producerNotes.join('\n'))}</pre>
+      <h4>Validation Notes</h4>
       <pre>${escapeHtml(packageItem.validationNotes.length ? packageItem.validationNotes.join('\n') : 'ไม่มี')}</pre>
     </details>
   `;
 
+  card.querySelectorAll('.section-tab').forEach(tabButton => {
+    tabButton.addEventListener('click', () => {
+      const index = tabButton.dataset.sectionIndex;
+      card.querySelectorAll('.section-tab').forEach(btn => btn.classList.toggle('active', btn.dataset.sectionIndex === index));
+      card.querySelectorAll('.section-panel').forEach(panel => {
+        panel.hidden = panel.dataset.sectionIndex !== index;
+      });
+    });
+  });
+
+  card.querySelectorAll('.copy-section').forEach(button => {
+    button.addEventListener('click', async () => {
+      const index = Number(button.dataset.sectionIndex);
+      await navigator.clipboard.writeText(sections[index].text);
+      setStatus(`Copy successful: คัดลอก Section ${index + 1} ของ ${packageItem.metadata.scriptId} แล้ว`);
+    });
+  });
+
   card.querySelector('.copy-main').addEventListener('click', async () => {
-    await navigator.clipboard.writeText(packageItem.mainSpokenScript);
-    setStatus(`Copy successful: คัดลอก Main Script ${packageItem.metadata.script_id} แล้ว`);
+    await navigator.clipboard.writeText(script.fullText);
+    setStatus(`Copy successful: คัดลอก Full Pattern ${packageItem.metadata.scriptId} แล้ว`);
+  });
+
+  card.querySelector('.copy-shortloop').addEventListener('click', async () => {
+    await navigator.clipboard.writeText(`Short Loop (30s)\n${script.shortLoop30}\n\nShort Loop (90s)\n${script.shortLoop90}`);
+    setStatus(`Copy successful: คัดลอก Short Loop ${packageItem.metadata.scriptId} แล้ว`);
+  });
+
+  card.querySelector('.copy-truth').addEventListener('click', async () => {
+    await navigator.clipboard.writeText(JSON.stringify(packageItem.productTruth, null, 2));
+    setStatus(`Copy successful: คัดลอก Product Truth ${packageItem.metadata.scriptId} แล้ว`);
   });
 
   card.querySelector('.copy-metadata').addEventListener('click', async () => {
     await navigator.clipboard.writeText(metadataJson);
-    setStatus(`Copy successful: คัดลอก Metadata ${packageItem.metadata.script_id} แล้ว`);
+    setStatus(`Copy successful: คัดลอก Metadata ${packageItem.metadata.scriptId} แล้ว`);
+  });
+
+  card.querySelector('.copy-form').addEventListener('click', async () => {
+    await navigator.clipboard.writeText(packageItem.fullText);
+    setStatus(`Copy successful: คัดลอก Form เต็มของ ${packageItem.metadata.scriptId} แล้ว`);
+  });
+
+  card.querySelector('.print-form').addEventListener('click', () => {
+    openPrintFormView(p, packageItem);
   });
 
   card.querySelector('.export-json').addEventListener('click', () => {
@@ -506,22 +577,93 @@ function renderScriptCard(p, packageItem, mode){
     const url = URL.createObjectURL(blob);
     const link = document.createElement('a');
     link.href = url;
-    link.download = `${packageItem.metadata.script_id}.json`;
+    link.download = `${packageItem.metadata.scriptId}.json`;
     document.body.appendChild(link);
     link.click();
     link.remove();
     setTimeout(() => URL.revokeObjectURL(url), 1000);
-    setStatus(`Generated: Export JSON ${packageItem.metadata.script_id} แล้ว`);
+    setStatus(`Generated: Export JSON ${packageItem.metadata.scriptId} แล้ว`);
   });
 
   card.querySelector('.generate-again').addEventListener('click', () => {
-    const patternKey = packageItem.metadata.assigned_pattern;
+    const patternKey = pattern;
     p.hookVariants[patternKey] = (p.hookVariants[patternKey] || 0) + 1;
     render(state.currentPromos, state.currentMode, getCurrentAssignment());
     setStatus(`Generated: Generate Again โปรโมชั่นที่ ${p.index} Pattern ${patternKey} แล้ว`);
   });
 
   return card;
+}
+
+function openPrintFormView(p, packageItem){
+  const script = packageItem.mainSpokenScript;
+  const sections = [script.section1, script.section2, script.section3];
+  const metadataRows = Object.entries(packageItem.metadata)
+    .map(([key, value]) => `<tr><th>${escapeHtml(key)}</th><td>${escapeHtml(value || '-')}</td></tr>`)
+    .join('');
+  const sectionsHtml = sections.map((section, index) => `
+    <section class="print-section">
+      <h3>Section ${index + 1}: ${escapeHtml(section.title)}${section.estimatedMinutes != null ? ` (~${section.estimatedMinutes} นาที)` : ''}</h3>
+      <p class="print-script-block">${escapeHtml(section.text).replace(/\n/g, '<br>')}</p>
+    </section>
+  `).join('<div class="print-page-break"></div>');
+  const qaHtml = (packageItem.qAndA || []).map(item => `<p><strong>Q:</strong> ${escapeHtml(item.question)}<br><strong>A:</strong> ${escapeHtml(item.answer)}</p>`).join('') || '<p>ไม่มี</p>';
+  const policyHtml = (packageItem.policySafeGuide || []).map(item => `<li>${escapeHtml(item)}</li>`).join('') || '<li>ไม่มี</li>';
+
+  const doc = `<!doctype html>
+<html lang="th">
+<head>
+<meta charset="utf-8">
+<title>${escapeHtml(packageItem.metadata.scriptId)} — Print / Form View</title>
+<style>
+  @page { size: A4; margin: 18mm; }
+  body { font-family: 'Sarabun', 'Noto Sans Thai', sans-serif; color: #1a1a1a; line-height: 1.6; }
+  h1 { font-size: 20px; margin-bottom: 4px; }
+  h2 { font-size: 16px; margin-top: 24px; }
+  h3 { font-size: 14px; }
+  table { width: 100%; border-collapse: collapse; margin: 12px 0 20px; }
+  th, td { border: 1px solid #ccc; padding: 6px 10px; text-align: left; font-size: 12px; vertical-align: top; }
+  th { width: 32%; background: #f5f5f5; }
+  .print-script-block { background: #fafafa; border: 1px solid #ddd; padding: 12px 14px; border-radius: 6px; white-space: pre-wrap; }
+  .print-page-break { page-break-after: always; }
+  ul { padding-left: 20px; }
+  .print-summary { font-size: 13px; color: #333; }
+  @media print { .no-print { display: none; } }
+</style>
+</head>
+<body>
+  <button class="no-print" onclick="window.print()" style="margin-bottom:16px;">Print</button>
+  <h1>${escapeHtml(packageItem.metadata.promotionTitle)}</h1>
+  <p class="print-summary">${escapeHtml(packageItem.metadata.account)} · ${escapeHtml(packageItem.metadata.platform)} · Pattern ${escapeHtml(packageItem.metadata.assignedPattern)} · ${escapeHtml(packageItem.metadata.estimatedSpeakingTime)}</p>
+
+  <h2>Script Metadata</h2>
+  <table>${metadataRows}</table>
+
+  <h2>Promotion Summary (ตารางสรุปโปรโมชั่นก่อน On Air)</h2>
+  <p class="print-summary">${escapeHtml(packageItem.promotionSummary.join(' · '))}</p>
+
+  <h2>Main Spoken Script — 3 Sections</h2>
+  ${sectionsHtml}
+
+  <h2>Closing Loop</h2>
+  <p><strong>Short Loop 30s:</strong> ${escapeHtml(script.shortLoop30)}</p>
+  <p><strong>Short Loop 90s:</strong> ${escapeHtml(script.shortLoop90)}</p>
+
+  <h2>Q&amp;A</h2>
+  ${qaHtml}
+
+  <h2>Team Notes / Policy-Safe Guide</h2>
+  <ul>${policyHtml}</ul>
+</body>
+</html>`;
+
+  const printWindow = window.open('', '_blank');
+  if (!printWindow) {
+    setStatus('Warning: เบราว์เซอร์บล็อก Popup กรุณาอนุญาต Popup แล้วลองใหม่');
+    return;
+  }
+  printWindow.document.write(doc);
+  printWindow.document.close();
 }
 
 function escapeHtml(str){

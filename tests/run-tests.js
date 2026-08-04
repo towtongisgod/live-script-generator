@@ -27,6 +27,14 @@ function readText(relPath){
   return fs.readFileSync(path.join(root, relPath), 'utf8');
 }
 
+function fullTextOf(item){
+  return item.mainSpokenScript.fullText;
+}
+
+function sectionsOf(item){
+  return [item.mainSpokenScript.section1, item.mainSpokenScript.section2, item.mainSpokenScript.section3];
+}
+
 function parseForBrand(brand){
   const knowledge = readJson(path.join('data', brand.knowledge_file));
   const raw = readText(brand.sample_file);
@@ -209,8 +217,8 @@ check('word "คู่" means two included products', pairProduct.itemCount === 
 const malformedGift = core.parsePromotion('Body Serum 2 หลอด ราคาโปร 409 บาท รับฟรี', 0, readJson('data/skinoxy-products.json'), core.LSG_ACCOUNTS[0], {});
 const malformedPackage = pkg(malformedGift, 'A');
 check('unparsed explicit gift emits required error code', malformedGift.productTruthValidation.errors.some(error => error.code === 'EXPLICIT_GIFT_NOT_PARSED'));
-check('Product Truth conflict blocks normal script generation', malformedPackage.generationBlocked && malformedPackage.metadata.generation_status === 'BLOCKED');
-check('blocked script gives a clear correction prompt', /แก้ Input|ยืนยันข้อมูล/.test(malformedPackage.mainSpokenScript));
+check('Product Truth conflict blocks normal script generation', malformedPackage.generationBlocked && malformedPackage.metadata.generationStatus === 'BLOCKED');
+check('blocked script gives a clear correction prompt', /แก้ Input|ยืนยันข้อมูล/.test(fullTextOf(malformedPackage)));
 const duplicateTruth = core.parsePromotion('Jingi Tonic 1 ขวด ราคาโปร 999 บาท รับฟรี Jingi Tonic 1 ขวด', 0, readJson('data/dgmr-products.json'), core.LSG_ACCOUNTS.find(item => item.id === 'dgmr'), {});
 check('duplicate product and gift emits DUPLICATE_PRODUCT_GIFT', duplicateTruth.productTruthValidation.errors.some(error => error.code === 'DUPLICATE_PRODUCT_GIFT'));
 check('duplicate product and gift emits PRODUCT_GIFT_CONFLICT', duplicateTruth.productTruthValidation.errors.some(error => error.code === 'PRODUCT_GIFT_CONFLICT'));
@@ -227,35 +235,68 @@ Object.keys(primaryById).forEach(accountId => {
   const packages = core.STRATEGIES.map(pattern => pkg(p, pattern));
   check(`${accountId}: creates A/B/C packages`, packages.length === 3);
   packages.forEach(item => {
-    const text = item.mainSpokenScript;
-    check(`${accountId} Pattern ${item.metadata.assigned_pattern}: has script_id`, /^.+-\d{8}-\d{4}-[ABC]-\d{3}$/.test(item.metadata.script_id), item.metadata.script_id);
-    check(`${accountId} Pattern ${item.metadata.assigned_pattern}: main script not metadata`, !text.includes('script_id') && !text.includes('Promotion Summary'));
-    check(`${accountId} Pattern ${item.metadata.assigned_pattern}: no Session labels`, !/Session\s*[123]/i.test(item.fullText));
-    check(`${accountId} Pattern ${item.metadata.assigned_pattern}: spoken Thai length reasonable`, text.length >= 900 && text.length <= 3200, `${text.length}`);
-    check(`${accountId} Pattern ${item.metadata.assigned_pattern}: no banned terms`, BANNED.filter(word => text.includes(word)).length === 0, BANNED.filter(word => text.includes(word)).join(', '));
-    check(`${accountId} Pattern ${item.metadata.assigned_pattern}: producer line exists`, item.producerPushLine.length > 20);
-    check(`${accountId} Pattern ${item.metadata.assigned_pattern}: product truth exists`, item.productTruth.items && item.productTruth.rawText);
+    const text = fullTextOf(item);
+    check(`${accountId} Pattern ${item.metadata.assignedPattern}: has script_id`, /^.+-\d{8}-\d{4}-[ABC]-\d{3}$/.test(item.metadata.scriptId), item.metadata.scriptId);
+    check(`${accountId} Pattern ${item.metadata.assignedPattern}: main script not metadata`, !text.includes('scriptId') && !text.includes('Promotion Summary'));
+    check(`${accountId} Pattern ${item.metadata.assignedPattern}: no Session labels`, !/Session\s*[123]/i.test(text));
+    check(`${accountId} Pattern ${item.metadata.assignedPattern}: has exactly 3 sections`, sectionsOf(item).length === 3 && sectionsOf(item).every(section => section.text && section.text.length > 0));
+    check(`${accountId} Pattern ${item.metadata.assignedPattern}: spoken Thai length reasonable`, text.length >= 2000 && text.length <= 6000, `${text.length}`);
+    check(`${accountId} Pattern ${item.metadata.assignedPattern}: no banned terms`, BANNED.filter(word => text.includes(word)).length === 0, BANNED.filter(word => text.includes(word)).join(', '));
+    check(`${accountId} Pattern ${item.metadata.assignedPattern}: producer line exists`, item.producerPushLine.length > 20);
+    check(`${accountId} Pattern ${item.metadata.assignedPattern}: product truth exists`, item.productTruth.items && item.productTruth.rawText);
+    sectionsOf(item).forEach((section, index) => {
+      check(`${accountId} Pattern ${item.metadata.assignedPattern} Section ${index + 1}: no producer/system labels leak into spoken text`,
+        !/Pattern A|Pattern B|Pattern C|Producer|Pain Point|Product Knowledge|Guardrail|Section Objective|→|\|/.test(section.text));
+    });
   });
-  check(`${accountId}: A/B/C full scripts differ`, packages[0].mainSpokenScript !== packages[1].mainSpokenScript && packages[1].mainSpokenScript !== packages[2].mainSpokenScript);
+  check(`${accountId}: A/B/C full scripts differ`, fullTextOf(packages[0]) !== fullTextOf(packages[1]) && fullTextOf(packages[1]) !== fullTextOf(packages[2]));
   check(`${accountId}: Product Truth same A vs B`, sameFacts(packages[0], packages[1]));
   check(`${accountId}: Product Truth same B vs C`, sameFacts(packages[1], packages[2]));
 
-  const aText = packages[0].mainSpokenScript;
-  const bText = packages[1].mainSpokenScript;
-  const cText = packages[2].mainSpokenScript;
+  const aText = fullTextOf(packages[0]);
+  const bText = fullTextOf(packages[1]);
+  const cText = fullTextOf(packages[2]);
   check(`${accountId}: Pattern A diagnoses before value`, indexOfAny(aText, ['ปัญหา', 'สังเกต']) < indexOfAny(aText, ['ราคา', 'โปรโมชัน', 'ความคุ้ม']));
   check(`${accountId}: Pattern B engages before promotion`, indexOfAny(bText, ['คอมเมนต์', 'โมเมนต์', 'สถานการณ์']) < indexOfAny(bText, ['ราคา', 'โปร']));
   check(`${accountId}: Pattern C value before objection`, indexOfAny(cText, ['คุ้ม', 'ราคา', 'ตัวเลข']) < indexOfAny(cText, ['ข้อกังวล']));
 });
 
+console.log('\n=== V3 Section Output Contract ===');
+let sampleMatrixCount = 0;
+Object.keys(primaryById).forEach(accountId => {
+  const p = firstPromo(accountId);
+  core.STRATEGIES.forEach(pattern => {
+    const item = pkg(p, pattern);
+    sampleMatrixCount += 1;
+    sectionsOf(item).forEach((section, index) => {
+      check(`${accountId} ${pattern} Section ${index + 1}: speaking time within 2.4-3.6 minutes`,
+        section.estimatedMinutes >= 2.4 && section.estimatedMinutes <= 3.6,
+        `${section.estimatedMinutes}`);
+      check(`${accountId} ${pattern} Section ${index + 1}: has a title`, typeof section.title === 'string' && section.title.length > 0);
+    });
+    check(`${accountId} ${pattern}: has shortLoop30 and shortLoop90`, item.mainSpokenScript.shortLoop30.length > 0 && item.mainSpokenScript.shortLoop90.length > 0);
+    check(`${accountId} ${pattern}: has Q&A entries`, Array.isArray(item.qAndA) && item.qAndA.length > 0);
+    check(`${accountId} ${pattern}: has Policy-Safe Guide entries`, Array.isArray(item.policySafeGuide) && item.policySafeGuide.length > 0);
+  });
+});
+check('Sample Matrix: 5 accounts x A/B/C = 15 packages generated', sampleMatrixCount === 15, `${sampleMatrixCount}`);
+
+// Acceptance Criteria #12 — Pattern B must not be generic across brands (not just across platform).
+const skinoxyB = fullTextOf(pkg(firstPromo('skinoxy'), 'B'));
+const kissB = fullTextOf(pkg(firstPromo('kmb'), 'B'));
+const dgmrB = fullTextOf(pkg(firstPromo('dgmr'), 'B'));
+check('Pattern B: SKINOXY vs KISS cross-brand overlap below 65%', shingleOverlap(skinoxyB, kissB) < 0.65);
+check('Pattern B: SKINOXY vs DGMR cross-brand overlap below 65%', shingleOverlap(skinoxyB, dgmrB) < 0.65);
+check('Pattern B: KISS vs DGMR cross-brand overlap below 65%', shingleOverlap(kissB, dgmrB) < 0.65);
+
 const skinoxyTikTok = pkg(firstPromo('skinoxy'), 'B', { assignment: manualAssignment('B'), startTime: '19:00' });
 const skinoxyShopee = pkg(firstPromo('skinoxy-shopee'), 'B', { assignment: manualAssignment('B'), startTime: '19:00' });
-check('TikTok and Shopee persona scripts differ', skinoxyTikTok.mainSpokenScript !== skinoxyShopee.mainSpokenScript);
-check('TikTok CTA follows parsed single-product truth', skinoxyTikTok.mainSpokenScript.includes('เข้าไปดูสินค้าในตะกร้า'));
-check('Shopee CTA uses set basket language', skinoxyShopee.mainSpokenScript.includes('เข้าไปดูเซ็ตในตะกร้า'));
+check('TikTok and Shopee persona scripts differ', fullTextOf(skinoxyTikTok) !== fullTextOf(skinoxyShopee));
+check('TikTok CTA follows parsed single-product truth', fullTextOf(skinoxyTikTok).includes('เข้าไปดูสินค้าในตะกร้า'));
+check('Shopee CTA uses set basket language', fullTextOf(skinoxyShopee).includes('เข้าไปดูเซ็ตในตะกร้า'));
 
-const generatedAgain0 = pkg(firstPromo('skinoxy'), 'A', { hookVariant: 0 }).mainSpokenScript;
-const generatedAgain1 = pkg(firstPromo('skinoxy'), 'A', { hookVariant: 1 }).mainSpokenScript;
+const generatedAgain0 = fullTextOf(pkg(firstPromo('skinoxy'), 'A', { hookVariant: 0 }));
+const generatedAgain1 = fullTextOf(pkg(firstPromo('skinoxy'), 'A', { hookVariant: 1 }));
 check('Generate Again changes script wording', generatedAgain0 !== generatedAgain1);
 check('Generate Again keeps promo price', generatedAgain1.includes('239'));
 
@@ -274,36 +315,41 @@ Object.keys(SMOKE_INPUTS).forEach(accountId => {
   }));
   const scripts = qaPackages[accountId];
   scripts.forEach(item => {
-    const text = item.mainSpokenScript;
-    check(`${accountId} ${item.metadata.assigned_pattern}: Product Accuracy validation is clean`, item.productTruth.validation.valid && !item.generationBlocked);
-    check(`${accountId} ${item.metadata.assigned_pattern}: no producer instruction leaks`, PRODUCER_PHRASES.every(phrase => !text.includes(phrase)));
-    check(`${accountId} ${item.metadata.assigned_pattern}: no template English`, TEMPLATE_ENGLISH.every(term => !new RegExp(`\\b${term}\\b`, 'i').test(text)));
-    check(`${accountId} ${item.metadata.assigned_pattern}: estimated speaking time 2.5-3.5 minutes`, item.estimatedSpeakingTime >= 2.5 && item.estimatedSpeakingTime <= 3.5, `${item.estimatedSpeakingTime}`);
-    check(`${accountId} ${item.metadata.assigned_pattern}: estimatedSpeakingTime metadata exists`, /นาที$/.test(item.metadata.estimatedSpeakingTime));
-    check(`${accountId} ${item.metadata.assigned_pattern}: no adjacent repeated CTA`, (text.match(/เข้าไปดู(?:สินค้า|เซ็ต)ในตะกร้า/g) || []).length === 1);
-    check(`${accountId} ${item.metadata.assigned_pattern}: producer notes stay separate`, item.producerNotes.length > 0 && !text.includes(item.producerNotes[0]));
+    const text = fullTextOf(item);
+    check(`${accountId} ${item.metadata.assignedPattern}: Product Accuracy validation is clean`, item.productTruth.validation.valid && !item.generationBlocked);
+    check(`${accountId} ${item.metadata.assignedPattern}: no producer instruction leaks`, PRODUCER_PHRASES.every(phrase => !text.includes(phrase)));
+    check(`${accountId} ${item.metadata.assignedPattern}: no template English`, TEMPLATE_ENGLISH.every(term => !new RegExp(`\\b${term}\\b`, 'i').test(text)));
+    check(`${accountId} ${item.metadata.assignedPattern}: total speaking time roughly 3 sections worth (7-11 minutes)`, item.estimatedSpeakingTime >= 7 && item.estimatedSpeakingTime <= 11, `${item.estimatedSpeakingTime}`);
+    check(`${accountId} ${item.metadata.assignedPattern}: estimatedSpeakingTime metadata exists`, /นาที$/.test(item.metadata.estimatedSpeakingTime));
+    check(`${accountId} ${item.metadata.assignedPattern}: strong basket CTA appears exactly once (in the closing section)`, (text.match(/เข้าไปดู(?:สินค้า|เซ็ต)ในตะกร้าแล้วกดรับโปร/g) || []).length === 1);
+    check(`${accountId} ${item.metadata.assignedPattern}: producer notes stay separate`, item.producerNotes.length > 0 && !text.includes(item.producerNotes[0]));
   });
-  check(`${accountId}: A is longest and C is shortest`, scripts[0].mainSpokenScript.length > scripts[1].mainSpokenScript.length && scripts[1].mainSpokenScript.length > scripts[2].mainSpokenScript.length);
+  // V3: every pattern targets 3 sections x ~3 minutes (~9 minutes), so A/B/C should be
+  // similar total length now (not strictly A-longest/C-shortest like the single-script MVP).
+  const totalMinutesByPattern = scripts.map(item => item.estimatedSpeakingTime);
+  check(`${accountId}: A/B/C total speaking time stays within a similar band (not one pattern starved)`,
+    Math.max(...totalMinutesByPattern) - Math.min(...totalMinutesByPattern) <= 2.5,
+    totalMinutesByPattern.join(', '));
 });
 
 const singleProductPackages = [...qaPackages.kmb, ...qaPackages['kmb-shopee']];
 singleProductPackages.forEach(item => {
-  const text = item.mainSpokenScript;
-  check(`single product ${item.metadata.script_id}: no plural-only wording`, !text.includes('ของทุกชิ้น') && !text.includes('เซ็ตนี้'));
-  check(`single product ${item.metadata.script_id}: no unavailable option CTA`, !text.includes('เลือกสูตร') && !text.includes('เลือกกลิ่น'));
-  check(`single product ${item.metadata.script_id}: uses product basket CTA`, text.includes('เข้าไปดูสินค้าในตะกร้า'));
+  const text = fullTextOf(item);
+  check(`single product ${item.metadata.scriptId}: no plural-only wording`, !text.includes('ของทุกชิ้น') && !text.includes('เซ็ตนี้'));
+  check(`single product ${item.metadata.scriptId}: no unavailable option CTA`, !text.includes('เลือกสูตร') && !text.includes('เลือกกลิ่น'));
+  check(`single product ${item.metadata.scriptId}: uses product basket CTA`, text.includes('เข้าไปดูสินค้าในตะกร้า'));
 });
 
 Object.values(qaPackages).forEach(packages => {
-  const closing = packages.find(item => item.metadata.assigned_pattern === 'C').mainSpokenScript;
+  const closing = fullTextOf(packages.find(item => item.metadata.assignedPattern === 'C'));
   check('Pattern C has no purchase-delaying phrase', !/ไม่จำเป็นต้องรีบเลือก|เลือกเมื่อ/.test(closing));
 });
 
-const skinoxyClosing = qaPackages.skinoxy.find(item => item.metadata.assigned_pattern === 'C').mainSpokenScript;
+const skinoxyClosing = fullTextOf(qaPackages.skinoxy.find(item => item.metadata.assignedPattern === 'C'));
 check('SKINOXY Pattern C states safe 204.50 baht per tube', skinoxyClosing.includes('ราคาเฉลี่ย 204.50 บาทต่อหลอด'));
-const dgmrClosing = qaPackages.dgmr.find(item => item.metadata.assigned_pattern === 'C');
-check('DGMR Pattern C states safe 699.67 baht per item', dgmrClosing.mainSpokenScript.includes('ราคาเฉลี่ย 699.67 บาทต่อชิ้น'));
-check('DGMR Pattern C does not classify Jingi Tonic as a gift', dgmrClosing.productTruth.gift === null && !/ของแถม(?:เป็น|:)\s*Jingi Tonic/i.test(dgmrClosing.mainSpokenScript));
+const dgmrClosing = qaPackages.dgmr.find(item => item.metadata.assignedPattern === 'C');
+check('DGMR Pattern C states safe 699.67 baht per item', fullTextOf(dgmrClosing).includes('ราคาเฉลี่ย 699.67 บาทต่อชิ้น'));
+check('DGMR Pattern C does not classify Jingi Tonic as a gift', dgmrClosing.productTruth.gift === null && !/ของแถม(?:เป็น|:)\s*Jingi Tonic/i.test(fullTextOf(dgmrClosing)));
 
 function shingleOverlap(a, b, size = 5){
   const shingles = text => {
@@ -317,8 +363,8 @@ function shingleOverlap(a, b, size = 5){
 }
 
 ['A', 'B', 'C'].forEach((pattern, index) => {
-  check(`SKINOXY ${pattern}: TikTok and Shopee body overlap below 65%`, shingleOverlap(qaPackages.skinoxy[index].mainSpokenScript, qaPackages['skinoxy-shopee'][index].mainSpokenScript) < 0.65);
-  check(`KISS ${pattern}: TikTok and Shopee body overlap below 65%`, shingleOverlap(qaPackages.kmb[index].mainSpokenScript, qaPackages['kmb-shopee'][index].mainSpokenScript) < 0.65);
+  check(`SKINOXY ${pattern}: TikTok and Shopee body overlap below 65%`, shingleOverlap(fullTextOf(qaPackages.skinoxy[index]), fullTextOf(qaPackages['skinoxy-shopee'][index])) < 0.65);
+  check(`KISS ${pattern}: TikTok and Shopee body overlap below 65%`, shingleOverlap(fullTextOf(qaPackages.kmb[index]), fullTextOf(qaPackages['kmb-shopee'][index])) < 0.65);
 });
 
 console.log('\n=== UI, OCR, copy, and responsive static checks ===');

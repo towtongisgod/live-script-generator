@@ -1691,10 +1691,10 @@ function getCommunicationProfile(account, platform, testBlock){
 
 function createScriptId(p, metadata){
   const account = getAccountFromPromotion(p);
-  const date = String(metadata.live_date || '').replace(/-/g, '') || 'nodate';
-  const time = String(metadata.start_time || '').replace(':', '') || 'notime';
+  const date = String(metadata.liveDate || '').replace(/-/g, '') || 'nodate';
+  const time = String(metadata.startTime || '').replace(':', '') || 'notime';
   const index = String(p.index || 1).padStart(3, '0');
-  return `${account.account_code || 'SCRIPT'}-${date}-${time}-${metadata.assigned_pattern || 'NA'}-${index}`;
+  return `${account.account_code || 'SCRIPT'}-${date}-${time}-${metadata.assignedPattern || 'NA'}-${index}`;
 }
 
 function formatCompactPriceTruth(p){
@@ -1831,8 +1831,13 @@ function getBrandEngagementScene(p){
   return 'เคยมีวันที่ตั้งใจดูแลผิวกาย แต่พอของที่ใช้หมดเร็วหรือมีขั้นตอนยุ่งเกินไปก็ทำต่อเนื่องได้ยากไหม';
 }
 
-function getChoiceQuestion(p){
+function getChoiceQuestion(p, platform){
   const brandKey = p.brandKey || getBrandKey(p.brandId);
+  if (platform === 'shopee') {
+    if (brandKey === 'kiss') return 'ก่อนกดสั่ง ลองเช็กว่าอยากได้กลิ่นแบบหวาน สดใส หรือโดดเด่น จะช่วยเทียบตัวเลือกในหน้าสินค้าได้ตรงขึ้น';
+    if (brandKey === 'dgmr') return 'ก่อนกดสั่ง ลองระบุว่ากังวลเรื่องเส้นผมหรือหนังศีรษะด้านไหนมากที่สุด จะช่วยเทียบรายละเอียดสินค้าได้ตรงขึ้น';
+    return 'ก่อนกดสั่ง ลองระบุว่าผิวกายด้านไหนที่อยากแก้มากที่สุด จะช่วยเทียบรายละเอียดสินค้าได้ตรงขึ้น';
+  }
   if (brandKey === 'kiss') return 'ปกติเลือกน้ำหอมจากความหวาน ความสดใส หรือความโดดเด่นของกลิ่น ลองบอกสไตล์ที่ชอบไว้ได้เลย';
   if (brandKey === 'dgmr') return 'ตอนนี้กังวลเรื่องเส้นผมหรือหนังศีรษะด้านไหนมากที่สุด ลองบอกปัญหาหลักไว้ก่อน จะได้เลือกจากข้อมูลสินค้าได้ตรงขึ้น';
   return 'ตอนนี้ให้ความสำคัญกับผิวกายด้านไหนมากที่สุด ลองบอกปัญหาหลักไว้ก่อน จะได้เลือกจากข้อมูลสินค้าได้ตรงขึ้น';
@@ -1871,6 +1876,312 @@ function getClosingSupportLines(p, platform){
     `เมื่อสินค้าเป็นรายการเดียว การตรวจชื่อและราคาก่อนชำระทำได้เร็ว และช่วยลดความลังเลก่อนกดรับโปร`,
     'ถ้าสินค้าตรงกับสไตล์และโอกาสที่กำลังหา ให้ตรวจยอดและเงื่อนไขในตะกร้าได้ทันที'
   ];
+}
+
+// ---------------------------------------------------------------------------
+// V3 — 3-Section composer (Section Output Contract)
+// One Pattern = 3 spoken sections, each ~3 minutes, each self-contained
+// (Mini Hook + Main Value + Product Truth + Mini CTA) per SCRIPT_ENGINE_V3_SPEC.
+// ---------------------------------------------------------------------------
+
+const SECTION_TITLES = {
+  A: ['เช็กปัญหาและกลุ่มที่เหมาะ', 'ทำความเข้าใจและช่วยเลือก', 'สรุปคำแนะนำและเข้าโปร'],
+  B: ['สถานการณ์ใกล้ตัว', 'การใช้งานจริง', 'เชื่อมไลฟ์สไตล์เข้าสู่การซื้อ'],
+  C: ['เข้าโปรและของที่ได้ทันที', 'ตอบข้อกังวลก่อนตัดสินใจ', 'ทวนสรุปและปิดการขาย']
+};
+
+function getSectionTitles(patternKey){
+  return SECTION_TITLES[patternKey] || SECTION_TITLES.A;
+}
+
+function getMiniCta(platform, p, variantIndex = 0){
+  const language = getProductLanguage(p || {});
+  const pools = language.isMulti
+    ? (platform === 'shopee'
+      ? ['ลองเปิดดูรายการในเซ็ตเก็บไว้ก่อนได้เลย', 'เปิดตะกร้าเช็กรายละเอียดเซ็ตนี้เก็บไว้ก่อนได้เลย']
+      : ['ใครสนใจกดตะกร้าเก็บเซ็ตนี้ไว้ก่อน แล้วฟังรายละเอียดต่อกันได้เลย', 'กดตะกร้าเก็บไว้ก่อนได้เลย เดี๋ยวเล่ารายละเอียดต่อ'])
+    : (platform === 'shopee'
+      ? ['ลองเปิดดูรายละเอียดสินค้าเก็บไว้ก่อนได้เลย', 'เปิดตะกร้าเช็กรายละเอียดสินค้านี้เก็บไว้ก่อนได้เลย']
+      : ['ใครสนใจกดตะกร้าเก็บสินค้านี้ไว้ก่อน แล้วฟังรายละเอียดต่อกันได้เลย', 'กดตะกร้าเก็บไว้ก่อนได้เลย เดี๋ยวเล่ารายละเอียดต่อ']);
+  return pools[Math.abs(variantIndex) % pools.length];
+}
+
+function getBrandDetailLine(p, brandKey){
+  if (brandKey === 'dgmr') return buildDgmrRoutineLine(p);
+  if (brandKey === 'kiss') {
+    const fragrance = getPrimaryFragrance(p);
+    if (!fragrance) return 'ถ้ายังไม่มั่นใจเรื่องกลิ่น ลองเทียบจากโอกาสใช้และความรู้สึกที่อยากได้อีกครั้งก่อนตัดสินใจ';
+    const mood = formatMood(fragrance);
+    const occasion = formatOccasion(fragrance);
+    return `กลิ่น ${fragrance.name} ให้ความรู้สึกแบบ ${mood} เหมาะกับโอกาส ${occasion} ลองนึกภาพวันที่ใช้กลิ่นนี้เป็นกลิ่นหลักดูว่าเข้ากับสไตล์ที่ต้องการหรือไม่`;
+  }
+  return formatVariantGuidance(p) || '';
+}
+
+function buildKnowledgeDepthLine(p, brandKey){
+  if (brandKey === 'dgmr') {
+    const lines = getDgmrRelevantProducts(p).slice(0, 2).map(product => {
+      const ing = (product.key_ingredients || []).slice(0, 3).join(', ');
+      return ing ? `${product.name} มีส่วนผสมหลักคือ ${ing}` : '';
+    }).filter(Boolean);
+    return lines.join(' ');
+  }
+  if (brandKey === 'kiss') {
+    const fragrance = getPrimaryFragrance(p);
+    if (!fragrance) return '';
+    const notes = (fragrance.notes || []).slice(0, 3).join(', ');
+    const angle = (fragrance.selling_angles || [])[0];
+    return [
+      notes ? `กลิ่น ${fragrance.name} มีโน้ตหลักคือ ${notes}` : '',
+      angle ? `จุดขายของกลิ่นนี้คือความรู้สึกแบบ ${angle}` : ''
+    ].filter(Boolean).join(' ');
+  }
+  const variants = p.selectedVariants || [];
+  const lines = variants.slice(0, 2).map(variant => {
+    const ing = (variant.ingredients || []).slice(0, 3).join(', ');
+    const label = [variant.name, variant.color].filter(Boolean).join(' ');
+    return ing ? `${label} มีส่วนผสมหลักคือ ${ing}` : '';
+  }).filter(Boolean);
+  return lines.join(' ');
+}
+
+function buildPlatformSections(p, patternKey, context){
+  const platform = context.platform === 'shopee' ? 'shopee' : 'tiktok';
+  const brandKey = context.brandKey || p.brandKey || getBrandKey(p.brandId);
+  const angles = getBrandSpecificAngles(p);
+  const items = getMainItemsSpeech(p);
+  const price = formatCompactPriceTruth(p);
+  const gift = getGiftSpeech(p);
+  const discount = getDiscountSpeech(p);
+  const average = getAverageSpeech(p);
+  const engagementScene = getBrandEngagementScene(p);
+  const choiceQuestion = getChoiceQuestion(p, platform);
+  const closingLines = getClosingSupportLines(p, platform);
+  const hookVariant = context.hookVariant || 0;
+  const lead = getPatternLead(patternKey, brandKey, platform, hookVariant);
+  const detailLine = getBrandDetailLine(p, brandKey);
+  const knowledgeDepth = buildKnowledgeDepthLine(p, brandKey);
+  const brandCharacter = getBrandCharacter(p);
+  const miniCta1 = getMiniCta(platform, p, hookVariant);
+  const miniCta2 = getMiniCta(platform, p, hookVariant + 1);
+  const fullCta = getPlatformCta(platform, 'C', p);
+  const giftLine = p.gift ? `ของแถมของโปรนี้คือ ${formatGiftLine(p)}` : '';
+  const decideReassure = platform === 'shopee'
+    ? 'ถ้ายังตัดสินใจไม่ได้ ลองเปิดหน้าสินค้าอ่านรายละเอียดอีกครั้งแล้วเทียบกับสิ่งที่กำลังหาซื้ออยู่'
+    : 'ถ้ายังตัดสินใจไม่ได้ ลองย้อนฟังจุดที่ตรงกับปัญหาของตัวเองอีกทีแล้วดูว่าเข้ากับสิ่งที่ต้องการจริงไหม';
+  const checkBasketReassure = platform === 'shopee'
+    ? 'ก่อนชำระเงิน เช็กชื่อสินค้า ตัวเลือก และราคาในหน้าตะกร้าให้ตรงกับที่อ่านมาทุกครั้ง'
+    : 'ก่อนกดยืนยัน เช็กชื่อสินค้า จำนวน และราคาในตะกร้าให้ตรงกับที่คุยกันในไลฟ์นี้';
+  const lateJoinCatchup = platform === 'shopee'
+    ? `สำหรับคนที่เพิ่งเปิดมาดู หน้านี้คือ ${items}${price ? ` ${price}` : ''}`
+    : `ถ้าเพิ่งเข้ามาดู สรุปสั้นๆ ให้ฟังอีกทีคือโปรนี้คือ ${items}${price ? ` ${price}` : ''}`;
+  const lateJoinCatchupClose = platform === 'shopee'
+    ? `ทวนอีกครั้งสำหรับคนที่เพิ่งเปิดมาดู สินค้านี้คือ ${items}${p.gift ? ` พร้อม ${formatGiftLine(p)}` : ''}`
+    : `ย้อนสรุปอีกครั้งสำหรับใครที่เพิ่งตามมา โปรนี้คือ ${items}${p.gift ? ` พร้อม ${formatGiftLine(p)}` : ''}`;
+  const compareSeparate = (p.regular && p.promoPrice && p.discount)
+    ? (platform === 'shopee'
+      ? 'ถ้าเทียบกับการซื้อทีละชิ้นในราคาปกติ ยอดรวมจะสูงกว่านี้ เพราะราคาโปรนี้รวมส่วนลดไว้ในหน้าเดียวแล้ว'
+      : 'ถ้าซื้อแยกทีละชิ้นในราคาปกติ รวมกันจะจ่ายมากกว่านี้ เพราะโปรนี้รวมส่วนลดจากราคาปกติไว้ให้แล้ว')
+    : '';
+  const whyNowLine = platform === 'shopee'
+    ? 'รายละเอียดโปรในหน้าร้านอาจถูกปรับตามรอบ ถ้าตรงกับที่กำลังหาอยู่แล้ว ให้ตัดสินใจจากราคาและของที่แสดงอยู่ในหน้านี้'
+    : 'รายละเอียดโปรและของที่ได้รับในไลฟ์นี้อาจปรับเปลี่ยนได้ในแต่ละรอบ ถ้าตรงกับที่ต้องการอยู่แล้วให้ตัดสินใจจากข้อมูลที่พูดในไลฟ์นี้';
+  const brandPositioningLine = brandCharacter.positioning
+    ? `แนวทางของแบรนด์ ${p.brandName || 'นี้'} คือเน้นเรื่อง ${brandCharacter.positioning}`
+    : '';
+  const closeSupport1 = closingLines[0] || '';
+  const closeSupport2 = closingLines[1] || '';
+  const closeSupport3 = closingLines[2] || closingLines[closingLines.length - 1] || '';
+  const closeSupport4 = closingLines[3] || closingLines[closingLines.length - 1] || '';
+
+  let s1, s2, s3;
+
+  if (patternKey === 'B') {
+    s1 = joinSentences([
+      engagementScene,
+      lead,
+      brandPositioningLine,
+      'ถ้าเคยเจอสถานการณ์นี้ ลองคอมเมนต์บอกกันได้เลยว่าปกติแก้ปัญหานี้ยังไง',
+      `ของที่พูดถึงวันนี้คือ ${items}`,
+      gift,
+      price ? (platform === 'shopee' ? `ราคาในหน้านี้คือ ${price}` : `ราคาคร่าวๆ ที่คุยกันวันนี้คือ ${price}`) : '',
+      discount,
+      average,
+      choiceQuestion,
+      closeSupport1,
+      closeSupport2,
+      closeSupport3,
+      miniCta1
+    ]);
+    s2 = joinSentences([
+      lateJoinCatchup,
+      angles.experience,
+      angles.product,
+      angles.choice,
+      detailLine,
+      knowledgeDepth,
+      average,
+      discount,
+      closeSupport1,
+      closeSupport2,
+      closeSupport3,
+      closeSupport4,
+      miniCta2
+    ]);
+    s3 = joinSentences([
+      lateJoinCatchupClose,
+      angles.fit,
+      price ? `เรื่องราคา ${price}` : 'ราคาให้ดูตามรายละเอียดในตะกร้า',
+      discount,
+      average,
+      giftLine,
+      compareSeparate,
+      closeSupport3,
+      closeSupport4,
+      decideReassure,
+      whyNowLine,
+      checkBasketReassure,
+      fullCta
+    ]);
+  } else if (patternKey === 'C') {
+    s1 = joinSentences([
+      lead,
+      platform === 'shopee'
+        ? `หน้านี้ได้ ${items}${p.gift ? ` พร้อม ${formatGiftLine(p)}` : ''}`
+        : `โปรนี้ได้ ${items}${p.gift ? ` พร้อม ${formatGiftLine(p)}` : ''}`,
+      price ? `ราคาที่ระบุชัดคือ ${price}` : 'ราคาให้ดูตามรายละเอียดในตะกร้า',
+      discount,
+      average,
+      compareSeparate,
+      brandPositioningLine,
+      angles.fit,
+      angles.experience,
+      choiceQuestion,
+      closeSupport1,
+      closeSupport2,
+      miniCta1
+    ]);
+    s2 = joinSentences([
+      lateJoinCatchup,
+      angles.product,
+      angles.choice,
+      knowledgeDepth,
+      detailLine,
+      average,
+      closeSupport1,
+      closeSupport2,
+      closeSupport3,
+      decideReassure,
+      miniCta2
+    ]);
+    s3 = joinSentences([
+      lateJoinCatchupClose,
+      platform === 'shopee' ? `ทวนอีกรอบว่าหน้านี้ได้ ${items}` : `ทวนอีกรอบว่าโปรนี้ได้ ${items}`,
+      price ? (platform === 'shopee' ? `ราคาสุทธิที่ต้องจ่ายคือ ${price}` : `ราคาสรุปคือ ${price}`) : 'ราคาให้ตรวจตามตะกร้าอีกครั้ง',
+      giftLine,
+      average,
+      discount,
+      angles.fit,
+      angles.experience,
+      closeSupport4,
+      decideReassure,
+      whyNowLine,
+      checkBasketReassure,
+      fullCta
+    ]);
+  } else {
+    s1 = joinSentences([
+      lead,
+      angles.problem,
+      brandPositioningLine,
+      choiceQuestion,
+      platform === 'shopee' ? `รายการที่แสดงอยู่ในหน้านี้คือ ${items}` : `โปรนี้ที่ระบุไว้คือ ${items}`,
+      gift,
+      price ? (platform === 'shopee' ? `ราคาในหน้านี้คือ ${price}` : `ราคาคร่าวๆ ที่คุยกันวันนี้คือ ${price}`) : '',
+      discount,
+      average,
+      closeSupport1,
+      closeSupport2,
+      closeSupport3,
+      miniCta1
+    ]);
+    s2 = joinSentences([
+      lateJoinCatchup,
+      angles.product,
+      angles.choice,
+      angles.experience,
+      detailLine,
+      knowledgeDepth,
+      average,
+      discount,
+      closeSupport1,
+      closeSupport2,
+      closeSupport3,
+      miniCta2
+    ]);
+    s3 = joinSentences([
+      lateJoinCatchupClose,
+      angles.fit,
+      price ? (platform === 'shopee' ? `ราคาที่แสดงในหน้าสินค้าคือ ${price}` : `สำหรับราคา ${price}`) : 'ราคาให้ดูตามรายละเอียดในตะกร้า',
+      discount,
+      average,
+      giftLine,
+      compareSeparate,
+      closeSupport3,
+      closeSupport4,
+      decideReassure,
+      whyNowLine,
+      checkBasketReassure,
+      fullCta
+    ]);
+  }
+
+  return [s1, s2, s3];
+}
+
+function buildShortLoop(p, patternKey, context, seconds){
+  const platform = context.platform === 'shopee' ? 'shopee' : 'tiktok';
+  const items = getMainItemsSpeech(p);
+  const price = formatCompactPriceTruth(p);
+  const cta = getPlatformCta(platform, 'C', p);
+  const lines = seconds <= 30
+    ? [`${items}${price ? ` ${price}` : ''}`, cta]
+    : [`${items}${price ? ` ${price}` : ''}`, getGiftSpeech(p), cta];
+  return enforceLanguageRules(joinSentences(lines.filter(Boolean)), p);
+}
+
+function speakingTimeWarning(minutes){
+  if (minutes === null || minutes === undefined) return null;
+  if (minutes < 2.4) return `Section สั้นกว่าเป้าหมาย (${minutes.toFixed(2)} นาที ต่ำกว่า 2.4 นาที)`;
+  if (minutes > 3.6) return `Section ยาวกว่าเป้าหมาย (${minutes.toFixed(2)} นาที เกิน 3.6 นาที)`;
+  return null;
+}
+
+function buildQAndA(p, brandKey){
+  const qa = [];
+  qa.push({ question: 'ลูกค้าถามว่าโปรนี้ได้อะไรบ้าง', answer: `${getMainItemsSpeech(p)}${p.gift ? ` พร้อม ${formatGiftLine(p)}` : ''}` });
+  const price = formatCompactPriceTruth(p);
+  if (price) qa.push({ question: 'ลูกค้าถามเรื่องราคาและส่วนลด', answer: price });
+  if (p.itemCount) {
+    qa.push({ question: 'ลูกค้าถามจำนวนสินค้าที่ได้รับ', answer: `รวม ${p.itemCount} ชิ้นตามที่ระบุในโปร` });
+  } else {
+    qa.push({ question: 'ลูกค้าถามราคาต่อชิ้น', answer: 'จำนวนสินค้ายังไม่ชัดเจนจากข้อมูลโปร จึงยังไม่คำนวณราคาต่อชิ้น ให้เช็กจากตะกร้า' });
+  }
+  if (brandKey === 'dgmr') qa.push({ question: 'ลูกค้าถามว่าแต่ละตัวในเซ็ตใช้ทำอะไร', answer: buildDgmrProductRoles(p) });
+  if (brandKey === 'kiss') qa.push({ question: 'ลูกค้าถามว่ากลิ่นนี้เหมาะกับใคร', answer: getBrandSpecificAngles(p).fit });
+  if (brandKey === 'skinoxy') qa.push({ question: 'ลูกค้าถามว่าเหมาะกับผิวแบบไหน', answer: getBrandSpecificAngles(p).fit });
+  return qa;
+}
+
+function buildPolicySafeGuide(p){
+  return [
+    'ห้ามพูดว่า "รับประกันผล" "เห็นผลทันที" "หายแน่นอน" หรือ "ขาวถาวร"',
+    'ห้ามอ้าง Scarcity เท็จ เช่น "เหลือไม่กี่ชิ้น" หากไม่มีข้อมูล Stock จริง',
+    'ใช้คำว่า "ตะกร้า" เท่านั้น ห้ามใช้ "ตะกร้าสีเหลือง"',
+    'ห้ามให้ข้อมูลทางการแพทย์หรือ Claim ที่เกินจริง',
+    p.itemCount ? null : 'จำนวนสินค้าไม่ชัดเจนจาก Input ห้ามคำนวณราคาต่อชิ้นเอง',
+    p.gift ? null : 'ไม่มีข้อมูลของแถมที่ยืนยันได้ ห้ามพูดว่ามีของแถม'
+  ].filter(Boolean);
 }
 
 function composeTikTokScript(p, patternKey, context){
@@ -2091,8 +2402,26 @@ function buildDepthAddendum(p, patternKey, context){
 }
 
 function buildMainSpokenScript(p, patternKey, context){
-  const composer = context.platform === 'shopee' ? composeShopeeScript : composeTikTokScript;
-  return enforceLanguageRules(composer(p, patternKey, context), p);
+  const brandKey = context.brandKey || p.brandKey || getBrandKey(p.brandId);
+  const [raw1, raw2, raw3] = buildPlatformSections(p, patternKey, context);
+  const text1 = enforceLanguageRules(raw1, p);
+  const text2 = enforceLanguageRules(raw2, p);
+  const text3 = enforceLanguageRules(raw3, p);
+  const titles = getSectionTitles(patternKey);
+  const t1 = estimateSpeakingTime(text1);
+  const t2 = estimateSpeakingTime(text2);
+  const t3 = estimateSpeakingTime(text3);
+  const fullText = [text1, text2, text3].join('\n\n');
+  return {
+    section1: { title: titles[0], estimatedMinutes: t1.minutes, text: text1, warning: speakingTimeWarning(t1.minutes) },
+    section2: { title: titles[1], estimatedMinutes: t2.minutes, text: text2, warning: speakingTimeWarning(t2.minutes) },
+    section3: { title: titles[2], estimatedMinutes: t3.minutes, text: text3, warning: speakingTimeWarning(t3.minutes) },
+    fullText,
+    shortLoop30: buildShortLoop(p, patternKey, context, 30),
+    shortLoop90: buildShortLoop(p, patternKey, context, 90),
+    qAndA: buildQAndA(p, brandKey),
+    policySafeGuide: buildPolicySafeGuide(p)
+  };
 }
 
 function buildPromotionSummary(p){
@@ -2133,17 +2462,38 @@ function formatFullScript(scriptPackage){
   const notes = scriptPackage.validationNotes.length
     ? scriptPackage.validationNotes.map(item => `- ${item}`).join('\n')
     : '- ไม่มี';
+  const script = scriptPackage.mainSpokenScript;
+  const sectionsText = script && script.section1
+    ? [script.section1, script.section2, script.section3].map((section, index) =>
+      `### Section ${index + 1}: ${section.title} (~${section.estimatedMinutes} นาที)\n${section.text}`
+    ).join('\n\n')
+    : script;
+  const qaText = (scriptPackage.qAndA || []).map(item => `Q: ${item.question}\nA: ${item.answer}`).join('\n\n') || '- ไม่มี';
+  const policyText = (scriptPackage.policySafeGuide || []).map(item => `- ${item}`).join('\n') || '- ไม่มี';
   return `# Script Metadata
 ${metadataLines.join('\n')}
 
 # Promotion Summary
 ${scriptPackage.promotionSummary.join('\n')}
 
-# Main Spoken Script
-${scriptPackage.mainSpokenScript}
+# Main Spoken Script (3 Sections)
+${sectionsText}
+
+# Short Loop (30s / 90s)
+${script && script.shortLoop30 ? script.shortLoop30 : '-'}
+${script && script.shortLoop90 ? script.shortLoop90 : '-'}
 
 # Producer Push Line
 ${scriptPackage.producerPushLine}
+
+# Producer Notes
+${scriptPackage.producerNotes.join('\n')}
+
+# Q&A
+${qaText}
+
+# Policy-Safe Guide
+${policyText}
 
 # Validation Notes
 ${notes}`;
@@ -2166,21 +2516,21 @@ function createScriptPackage(p, pattern = 'A', context = {}){
   const profile = getCommunicationProfile(account.id, platform, assignment.test_block);
   const generatedAt = context.generatedAt || new Date().toISOString();
   const metadata = {
-    script_id: '',
-    generated_at: generatedAt,
+    scriptId: '',
+    generatedAt,
     account: account.label || p.accountLabel || p.brandName,
     brand: BRAND_PERSONAS[brandKey]?.label || p.brandName,
     platform: PLATFORM_PERSONAS[platform]?.label || platform,
-    live_date: context.liveDate || assignment.live_date || '',
-    start_time: context.startTime || assignment.start_time || '',
-    test_block: assignment.test_block || '',
-    assigned_pattern: patternKey,
-    pattern_style: patternMeta.style,
-    pattern_source: assignment.pattern_source || context.patternSource || 'AUTO',
-    promotion_title: p.title || 'ไม่ระบุชื่อโปร',
-    script_version: 'august-2026-v2'
+    liveDate: context.liveDate || assignment.live_date || '',
+    startTime: context.startTime || assignment.start_time || '',
+    testBlock: assignment.test_block || '',
+    assignedPattern: patternKey,
+    patternStyle: patternMeta.style,
+    patternSource: assignment.pattern_source || context.patternSource || 'AUTO',
+    promotionTitle: p.title || 'ไม่ระบุชื่อโปร',
+    scriptVersion: 'august-2026-v3'
   };
-  metadata.script_id = createScriptId(p, metadata);
+  metadata.scriptId = createScriptId(p, metadata);
   const truth = buildProductTruth(p);
   const generationBlocked = Boolean(truth.validation?.blocked);
   const normalScript = buildMainSpokenScript(p, patternKey, {
@@ -2194,22 +2544,36 @@ function createScriptPackage(p, pattern = 'A', context = {}){
     assignment,
     productTruth: truth
   });
-  const mainSpokenScript = generationBlocked
+  const blockedMessage = generationBlocked
     ? `ยังไม่สามารถสร้าง Main Script ได้ เพราะข้อมูลสินค้าและของแถมขัดแย้งหรือไม่ครบ กรุณาแก้ Input หรือยืนยันข้อมูลก่อน รหัสตรวจสอบ: ${truth.validation.errors.map(error => error.code).join(', ')}`
+    : null;
+  const mainSpokenScript = generationBlocked
+    ? {
+      section1: { title: getSectionTitles(patternKey)[0], estimatedMinutes: null, text: blockedMessage, warning: 'BLOCKED' },
+      section2: { title: getSectionTitles(patternKey)[1], estimatedMinutes: null, text: '', warning: 'BLOCKED' },
+      section3: { title: getSectionTitles(patternKey)[2], estimatedMinutes: null, text: '', warning: 'BLOCKED' },
+      fullText: blockedMessage,
+      shortLoop30: blockedMessage,
+      shortLoop90: blockedMessage,
+      qAndA: [],
+      policySafeGuide: []
+    }
     : normalScript;
-  const speakingTime = estimateSpeakingTime(mainSpokenScript);
-  metadata.estimatedSpeakingTime = generationBlocked ? 'BLOCKED' : speakingTime.label;
-  metadata.generation_status = generationBlocked ? 'BLOCKED' : 'READY_FOR_QA';
+  const totalMinutes = generationBlocked
+    ? null
+    : Number((mainSpokenScript.section1.estimatedMinutes + mainSpokenScript.section2.estimatedMinutes + mainSpokenScript.section3.estimatedMinutes).toFixed(2));
+  metadata.estimatedSpeakingTime = generationBlocked ? 'BLOCKED' : `${totalMinutes} นาที`;
+  metadata.generationStatus = generationBlocked ? 'BLOCKED' : 'READY_FOR_QA';
   const producerPushLine = [
     `${patternMeta.short_name}: ${patternMeta.copy_hint || patternMeta.objective}`,
-    `Account ${metadata.account} / ${metadata.test_block}`,
+    `Account ${metadata.account} / ${metadata.testBlock}`,
     `ย้ำเฉพาะ Product Truth: ${formatCompactPriceTruth(p) || 'ราคาในตะกร้า'}`,
     getPlatformCta(platform, patternKey, p)
   ].filter(Boolean).join('\n');
   const producerNotes = [
     `แนวทาง ${patternMeta.short_name}: ${patternMeta.objective}`,
-    `โฟกัส ${metadata.account} ช่วง ${metadata.test_block}`,
-    `เวลาพูดโดยประมาณ ${metadata.estimatedSpeakingTime}`,
+    `โฟกัส ${metadata.account} ช่วง ${metadata.testBlock}`,
+    `เวลาพูดโดยประมาณรวม 3 Sections: ${metadata.estimatedSpeakingTime}`,
     'ตรวจชื่อสินค้า จำนวน ราคา ของแถม และตัวเลือกจากตะกร้าก่อนเริ่มขาย'
   ];
   const validationNotes = buildValidationNotes(p, assignment);
@@ -2218,6 +2582,8 @@ function createScriptPackage(p, pattern = 'A', context = {}){
     productTruth: truth,
     promotionSummary: buildPromotionSummary(p),
     mainSpokenScript,
+    qAndA: mainSpokenScript.qAndA,
+    policySafeGuide: mainSpokenScript.policySafeGuide,
     producerPushLine,
     producerNotes,
     validationNotes,
@@ -2225,7 +2591,7 @@ function createScriptPackage(p, pattern = 'A', context = {}){
     pattern: patternMeta,
     assignment,
     structuralMarkers: patternMeta.marker_order || [],
-    estimatedSpeakingTime: generationBlocked ? null : speakingTime.minutes
+    estimatedSpeakingTime: totalMinutes
   };
   scriptPackage.fullText = formatFullScript(scriptPackage);
   return scriptPackage;
@@ -2291,6 +2657,7 @@ if (typeof module !== 'undefined' && module.exports) {
     buildSession, buildPriceSpeech, splitPromotions, parsePromotion, buildProductTruth, validateProductTruth, estimateSpeakingTime,
     LSG_ACCOUNTS, SELLING_PATTERNS, PLATFORM_PERSONAS, BRAND_PERSONAS, AUDIENCE_PROFILES,
     STRATEGIES, STRATEGY_META, STRATEGY_ALIASES, normalizePatternKey, resolveAssignedPattern,
-    getCommunicationProfile, createScriptPackage, createScript, enforceLanguageRules, getBrandKey
+    getCommunicationProfile, createScriptPackage, createScript, enforceLanguageRules, getBrandKey,
+    getSectionTitles, buildQAndA, buildPolicySafeGuide, speakingTimeWarning
   };
 }
