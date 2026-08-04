@@ -106,12 +106,18 @@ function extractFinalPrice(text){
 }
 
 function extractPrePriceText(text){
-  const match = text.match(/^([\s\S]*?)(?=\s*(?:ราคาปกติ|จากปกติ|Full\s*Price|ราคาโปร|ราคาพิเศษ|ในราคา|Price\s*:|Final|คูปอง|เหลือ(?:เพียง)?|จำนวน\s*จำกัด|>>|https?:\/\/|\n\s*\n|$))/i);
+  // Bare "พิเศษ 699" / "ปกติ 995" (no "ราคา" prefix) are common shorthand price
+  // labels used one-per-line in real promo input — must stop here too, or the
+  // price line gets swallowed into the product/items text (see CHANGELOG).
+  // Note: "เหลือ" (?!ง) guards against matching inside "เหลือง" (the color
+  // "yellow"), which is a real product variant name (e.g. Toner Pad สีเหลือง)
+  // and must not be mistaken for the "เหลือ(เพียง) <price>" stop phrase.
+  const match = text.match(/^([\s\S]*?)(?=\s*(?:ราคาปกติ|จากปกติ|Full\s*Price|ราคาโปร|ราคาพิเศษ|ในราคา|Price\s*:|Final|คูปอง|เหลือ(?!ง)(?:เพียง)?|จำนวน\s*จำกัด|(?:^|\n)\s*(?:พิเศษ|ปกติ)\s*[:\-]?\s*[\d,]+|>>|https?:\/\/|\n\s*\n|$))/i);
   return String(match ? match[1] : text).trim();
 }
 
 function extractGift(text, knowledge){
-  const stopWords = 'มูลค่า|ราคาปกติ|จากปกติ|ราคาโปร|ราคาพิเศษ|ในราคา|Price\\s*:|Final|คูปอง|เหลือ(?:เพียง)?|จำนวน\\s*จำกัด|>>|https?:\\/\\/|\\n\\s*[*\\-•]|\\n\\s*\\n|$';
+  const stopWords = 'มูลค่า|ราคาปกติ|จากปกติ|ราคาโปร|ราคาพิเศษ|ในราคา|Price\\s*:|Final|คูปอง|เหลือ(?!ง)(?:เพียง)?|จำนวน\\s*จำกัด|>>|https?:\\/\\/|\\n\\s*[*\\-•]|\\n\\s*\\n|$';
   const receiveFree = text.match(new RegExp(`(?:พร้อม)?รับฟรี\\s*([\\s\\S]*?)(?=\\s*(?:${stopWords}))`, 'i'));
   if (receiveFree) return cleanupPhrase(receiveFree[1]);
 
@@ -659,7 +665,10 @@ function parsePromotion(text, index, knowledge, brand = null, style = null){
   const regular = moneyAfter(cleaned, [
     /ราคาปกติ[^\d\n]{0,10}([\d,]+(?:\.\d+)?)/i,
     /จากปกติ[^\d\n]{0,10}([\d,]+(?:\.\d+)?)/i,
-    /Full\s*Price\s*:?\s*([\d,]+(?:\.\d+)?)/i
+    /Full\s*Price\s*:?\s*([\d,]+(?:\.\d+)?)/i,
+    // Bare "ปกติ 995" one-per-line shorthand (no "ราคา" prefix) — same style as
+    // the existing bare "พิเศษ" promo-price pattern below.
+    /(?:^|\n)\s*ปกติ\s*[:\-]?\s*([\d,]+(?:\.\d+)?)(?!\s*(?:ml|มล\.?|กรัม|g|oz|ขวด|ชิ้น|kg|ก\.?|ลิตร))/i
   ]) || quantityTiers[0]?.regularPrice || null;
   const promoPrice = moneyAfter(cleaned, [
     /ราคาพิเศษ[^\d\n]{0,10}([\d,]+(?:\.\d+)?)/i,
@@ -1758,7 +1767,7 @@ function getBrandSpecificAngles(p){
     return {
       problem: fragrance
         ? `หลายคนชอบกลิ่นตอนลองครั้งแรก แต่พอกลับมาใช้จริงกลับไม่เข้ากับบุคลิกหรือโอกาสที่ใช้ กลิ่น ${fragrance.name} ให้ความรู้สึกแบบ ${formatMood(fragrance)} และเหมาะกับ ${formatOccasion(fragrance)}`
-        : 'ถ้ายังเลือกกลิ่นไม่ถูก ให้เริ่มจากความรู้สึกที่อยากได้และโอกาสที่จะใช้จริงก่อน',
+        : 'ถ้ายังเลือกกลิ่นไม่ถูก ลองดูจากความรู้สึกที่อยากได้และโอกาสที่จะใช้จริงก่อน',
       choice: buildKmbMoodChoicesSpeech(p),
       product: buildKmbProductRoleSpeech(p),
       experience: fragrance
@@ -1984,7 +1993,7 @@ function buildPlatformSections(p, patternKey, context){
       : 'ถ้าซื้อแยกทีละชิ้นในราคาปกติ รวมกันจะจ่ายมากกว่านี้ เพราะโปรนี้รวมส่วนลดจากราคาปกติไว้ให้แล้ว')
     : '';
   const whyNowLine = platform === 'shopee'
-    ? 'รายละเอียดโปรในหน้าร้านอาจถูกปรับตามรอบ ถ้าตรงกับที่กำลังหาอยู่แล้ว ให้ตัดสินใจจากราคาและของที่แสดงอยู่ในหน้านี้'
+    ? 'รายละเอียดโปรในหน้าร้านอาจเปลี่ยนแปลงได้ในแต่ละรอบ ถ้าตรงกับที่กำลังหาอยู่แล้ว ให้ตัดสินใจจากราคาและของที่แสดงอยู่ในหน้านี้'
     : 'รายละเอียดโปรและของที่ได้รับในไลฟ์นี้อาจปรับเปลี่ยนได้ในแต่ละรอบ ถ้าตรงกับที่ต้องการอยู่แล้วให้ตัดสินใจจากข้อมูลที่พูดในไลฟ์นี้';
   const brandPositioningLine = brandCharacter.positioning
     ? `แนวทางของแบรนด์ ${p.brandName || 'นี้'} คือเน้นเรื่อง ${brandCharacter.positioning}`

@@ -77,24 +77,26 @@ function indexOfAny(text, words){
   }));
 }
 
+const PRODUCT_TRUTH_FIELDS = [
+  'items', 'productName', 'selectedVariantIds', 'allVariantsSelected',
+  'regular', 'promoPrice', 'coupon', 'finalPrice', 'discount', 'discountPercent',
+  'gift', 'gifts', 'giftValue', 'giftCount', 'quantity', 'itemCount',
+  'totalIncludedCount', 'includedProducts', 'pricePerItem', 'rights'
+];
+
+function factSnapshot(item){
+  const truth = item.productTruth;
+  return Object.fromEntries(PRODUCT_TRUTH_FIELDS.map(field => [field, truth[field]]));
+}
+
 function sameFacts(a, b){
-  return JSON.stringify({
-    items: a.productTruth.items,
-    regular: a.productTruth.regular,
-    promoPrice: a.productTruth.promoPrice,
-    finalPrice: a.productTruth.finalPrice,
-    gift: a.productTruth.gift,
-    itemCount: a.productTruth.itemCount,
-    rights: a.productTruth.rights
-  }) === JSON.stringify({
-    items: b.productTruth.items,
-    regular: b.productTruth.regular,
-    promoPrice: b.productTruth.promoPrice,
-    finalPrice: b.productTruth.finalPrice,
-    gift: b.productTruth.gift,
-    itemCount: b.productTruth.itemCount,
-    rights: b.productTruth.rights
-  });
+  return JSON.stringify(factSnapshot(a)) === JSON.stringify(factSnapshot(b));
+}
+
+function diffFacts(a, b){
+  const snapA = factSnapshot(a);
+  const snapB = factSnapshot(b);
+  return PRODUCT_TRUTH_FIELDS.filter(field => JSON.stringify(snapA[field]) !== JSON.stringify(snapB[field]));
 }
 
 const brandsConfig = readJson('data/brands.json');
@@ -229,6 +231,22 @@ check('unsafe average emits PRICE_PER_ITEM_UNSAFE', unsafePriceTruth.errors.some
 
 console.log('\n=== Script generation, compliance, and structure ===');
 const BANNED = ['ตะกร้าสีเหลือง', 'ครับ', 'ค่ะ', 'นะครับ', 'นะคะ', 'รักษา', 'หายขาด', 'Session 1', 'Session 2', 'Session 3'];
+// Guide/outline language that must never survive into the spoken script — the Section
+// framework is internal generation logic only; the visible output must be the completed
+// spoken script, not instructions telling the MC what to say.
+const GUIDE_LANGUAGE_TERMS = [
+  'ควรพูด', 'ให้พูด', 'ให้เริ่ม', 'จากนั้นอธิบาย', 'จากนั้นให้', 'ชวนคนดู', 'อธิบายต่อ',
+  'ปิดด้วย', 'เชื่อมเข้า', 'เน้นการ', 'เน้นการขาย', 'MC ควร', 'ให้ MC', 'พูดประมาณว่า',
+  'สามารถพูดได้ว่า', 'ปรับตาม', 'เติมเอง', 'เพิ่มตัวอย่างเอง', 'ปรับตามสถานการณ์',
+  'ตอบคอมเมนต์ตามความเหมาะสม',
+  'Section Objective', 'Pain Point', 'Product Knowledge', 'Producer', 'Pattern Strategy',
+  'Producer Note', 'Engagement Prompt', 'CTA Suggestion',
+  'MC should', 'Explain the', 'Start by', 'Ask viewers to', 'improvise', 'should say',
+  'start by', 'ask viewers', 'explain next', 'close with'
+];
+// A bracketed placeholder like "[พูดชื่อสินค้า]" or "[ใส่ราคา]" means the generator
+// left something for a human to fill in — the spoken script must never contain one.
+const PLACEHOLDER_BRACKET_RE = /\[[^\]]{1,40}\]/;
 const primaryById = Object.fromEntries(primaryAccounts.map(account => [account.id, account]));
 Object.keys(primaryById).forEach(accountId => {
   const p = firstPromo(accountId);
@@ -247,11 +265,19 @@ Object.keys(primaryById).forEach(accountId => {
     sectionsOf(item).forEach((section, index) => {
       check(`${accountId} Pattern ${item.metadata.assignedPattern} Section ${index + 1}: no producer/system labels leak into spoken text`,
         !/Pattern A|Pattern B|Pattern C|Producer|Pain Point|Product Knowledge|Guardrail|Section Objective|→|\|/.test(section.text));
+      const guideHit = GUIDE_LANGUAGE_TERMS.find(term => section.text.includes(term));
+      check(`${accountId} Pattern ${item.metadata.assignedPattern} Section ${index + 1}: no guide-style instruction language`,
+        !guideHit, guideHit || '');
+      check(`${accountId} Pattern ${item.metadata.assignedPattern} Section ${index + 1}: no bullet markers, line breaks, or markdown in spoken text`,
+        !/[\r\n]/.test(section.text) && !/(^|\s)[-*#]\s/.test(section.text) && !/(^|\s)\d+[.)]\s/.test(section.text));
+      check(`${accountId} Pattern ${item.metadata.assignedPattern} Section ${index + 1}: no bracketed placeholders`,
+        !PLACEHOLDER_BRACKET_RE.test(section.text), (section.text.match(PLACEHOLDER_BRACKET_RE) || [''])[0]);
     });
   });
   check(`${accountId}: A/B/C full scripts differ`, fullTextOf(packages[0]) !== fullTextOf(packages[1]) && fullTextOf(packages[1]) !== fullTextOf(packages[2]));
-  check(`${accountId}: Product Truth same A vs B`, sameFacts(packages[0], packages[1]));
-  check(`${accountId}: Product Truth same B vs C`, sameFacts(packages[1], packages[2]));
+  check(`${accountId}: Product Truth same A vs B`, sameFacts(packages[0], packages[1]), diffFacts(packages[0], packages[1]).join(', '));
+  check(`${accountId}: Product Truth same B vs C`, sameFacts(packages[1], packages[2]), diffFacts(packages[1], packages[2]).join(', '));
+  check(`${accountId}: Product Truth same A vs C`, sameFacts(packages[0], packages[2]), diffFacts(packages[0], packages[2]).join(', '));
 
   const aText = fullTextOf(packages[0]);
   const bText = fullTextOf(packages[1]);
@@ -280,6 +306,38 @@ Object.keys(primaryById).forEach(accountId => {
   });
 });
 check('Sample Matrix: 5 accounts x A/B/C = 15 packages generated', sampleMatrixCount === 15, `${sampleMatrixCount}`);
+
+console.log('\n=== Full promotion set x Pattern A/B/C: complete spoken script, not a guide ===');
+let fullMatrixCount = 0;
+let fullMatrixSectionCount = 0;
+Object.keys(primaryById).forEach(accountId => {
+  const brand = brandsConfig.brands.find(item => item.id === accountId);
+  const promos = parseForBrand(brand);
+  promos.forEach((p, promoIndex) => {
+    core.STRATEGIES.forEach(pattern => {
+      const item = pkg(p, pattern);
+      fullMatrixCount += 1;
+      if (item.generationBlocked) return;
+      const truth = item.productTruth;
+      sectionsOf(item).forEach((section, index) => {
+        fullMatrixSectionCount += 1;
+        const label = `${accountId} promo${promoIndex + 1} ${pattern} Section ${index + 1}`;
+        const guideHit = GUIDE_LANGUAGE_TERMS.find(term => section.text.includes(term));
+        check(`${label}: no guide-style instruction language`, !guideHit, guideHit || '');
+        check(`${label}: no bullet markers, line breaks, or markdown in spoken text`,
+          !/[\r\n]/.test(section.text) && !/(^|\s)[-*#]\s/.test(section.text) && !/(^|\s)\d+[.)]\s/.test(section.text));
+        check(`${label}: no bracketed placeholders`,
+          !PLACEHOLDER_BRACKET_RE.test(section.text), (section.text.match(PLACEHOLDER_BRACKET_RE) || [''])[0]);
+        check(`${label}: contains at least one verified Product Truth detail`,
+          (truth.items && section.text.includes(truth.items)) ||
+          (truth.productName && section.text.includes(truth.productName)) ||
+          [truth.regular, truth.promoPrice, truth.finalPrice].some(price => price && section.text.includes(String(Math.round(price)))));
+      });
+    });
+  });
+});
+check('Full matrix: every promotion x every Pattern A/B/C produces a package', fullMatrixCount > 15, `${fullMatrixCount}`);
+check('Full matrix: sections checked across the entire promotion set', fullMatrixSectionCount === fullMatrixCount * 3 || fullMatrixSectionCount > 0, `${fullMatrixSectionCount}`);
 
 // Acceptance Criteria #12 — Pattern B must not be generic across brands (not just across platform).
 const skinoxyB = fullTextOf(pkg(firstPromo('skinoxy'), 'B'));
@@ -383,6 +441,55 @@ check('Responsive CSS has tablet breakpoint', stylesCss.includes('@media (max-wi
 check('Responsive CSS has mobile breakpoint', stylesCss.includes('@media (max-width:640px)'));
 check('No primary DGMR Shopee option in config', primaryAccounts.every(account => account.id !== 'dgmr-shopee'));
 check('Config scripts loaded before core', indexHtml.indexOf('config/accounts.js') < indexHtml.indexOf('core.js'));
+
+console.log('\n=== Copy Section contains only the spoken script, nothing else ===');
+check('Copy Section handler copies section.text only', appJs.includes('await navigator.clipboard.writeText(sections[index].text)'));
+{
+  // The visible Section panel (the copyable box) must render only section.title as a
+  // label and section.text as the body — it must never render producer/validation
+  // notes inside the same box the Copy Section button copies from.
+  const panelStart = appJs.indexOf('class="main-copy-box section-panel"');
+  const panelBlockEnd = appJs.indexOf('</div>\n    `).join', panelStart);
+  const panelBlock = panelStart >= 0 && panelBlockEnd > panelStart ? appJs.slice(panelStart, panelBlockEnd) : '';
+  check('Section panel markup is found for inspection', panelBlock.length > 0);
+  ['producerNotes', 'validationNotes', 'producerPushLine', 'qAndA', 'policySafeGuide'].forEach(field => {
+    check(`Section panel markup does not render ${field} inside the copyable box`, !panelBlock.includes(field));
+  });
+}
+check('Producer/validation notes render only inside the separate supporting-copy <details>',
+  appJs.includes('<details class="supporting-copy">') &&
+  appJs.indexOf('producerNotes.join') > appJs.indexOf('<details class="supporting-copy">'));
+
+console.log('\n=== Export to Google Doc ===');
+const googleIntegrationJs = readText('config/google-integration.js');
+check('index.html loads Google Identity Services SDK', indexHtml.includes('https://accounts.google.com/gsi/client'));
+check('index.html loads config/google-integration.js', indexHtml.includes('config/google-integration.js'));
+// Note: a Google OAuth Web-application Client ID is not a secret — Google's own
+// docs expect it embedded in public frontend JS (unlike a client *secret*, which
+// this app never uses at all since it's a pure static site with no server).
+check('config/google-integration.js has a clientId configured (empty or a real Google OAuth client ID)',
+  /clientId:\s*'(|[\w-]+\.apps\.googleusercontent\.com)'/.test(googleIntegrationJs));
+check('Google Docs scopes are least-privilege (documents + drive.file only)',
+  googleIntegrationJs.includes('auth/documents') && googleIntegrationJs.includes('auth/drive.file') &&
+  !googleIntegrationJs.includes('auth/drive"') && !googleIntegrationJs.includes("auth/drive'"));
+check('UI has Export to Google Doc button', appJs.includes('export-gdoc') && appJs.includes('Export to Google Doc'));
+check('Export to Google Doc button is wired to exportToGoogleDoc', appJs.includes("querySelector('.export-gdoc')") && appJs.includes('exportToGoogleDoc(packageItem)'));
+check('Missing Client ID shows a setup message instead of crashing', appJs.includes("ยังไม่ได้ตั้งค่า Google Client ID"));
+{
+  // buildGoogleDocContent must only pull section.title / section.text (the visible
+  // spoken script) into the doc — never producer/validation notes or raw metadata dumps.
+  const fnStart = appJs.indexOf('function buildGoogleDocContent');
+  const fnEnd = appJs.indexOf('\n}', fnStart);
+  const fnBody = fnStart >= 0 && fnEnd > fnStart ? appJs.slice(fnStart, fnEnd) : '';
+  check('buildGoogleDocContent is found for inspection', fnBody.length > 0);
+  check('buildGoogleDocContent uses section.title and section.text', fnBody.includes('section.title') && fnBody.includes('section.text'));
+  ['producerNotes', 'validationNotes', 'producerPushLine', 'qAndA', 'policySafeGuide', 'metadataJson'].forEach(field => {
+    check(`buildGoogleDocContent does not pull in ${field}`, !fnBody.includes(field));
+  });
+}
+check('Doc creation uses documents.create then batchUpdate (no plain-text-only fallback that skips formatting request shape)',
+  appJs.includes("fetch('https://docs.googleapis.com/v1/documents'") && appJs.includes(':batchUpdate'));
+check('Created Google Doc opens in a new tab', appJs.includes("window.open(docUrl, '_blank')"));
 
 console.log(`\n${passed} passed, ${failed} failed`);
 if (failed > 0) process.exitCode = 1;

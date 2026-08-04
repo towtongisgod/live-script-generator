@@ -473,6 +473,7 @@ function renderScriptCard(p, packageItem, mode){
         <button class="copy-form">Copy All as Form</button>
         <button class="print-form">Print / Form View</button>
         <button class="export-json">Export JSON</button>
+        <button class="export-gdoc">Export to Google Doc</button>
       </div>
     </div>
 
@@ -585,6 +586,10 @@ function renderScriptCard(p, packageItem, mode){
     setStatus(`Generated: Export JSON ${packageItem.metadata.scriptId} แล้ว`);
   });
 
+  card.querySelector('.export-gdoc').addEventListener('click', () => {
+    exportToGoogleDoc(packageItem);
+  });
+
   card.querySelector('.generate-again').addEventListener('click', () => {
     const patternKey = pattern;
     p.hookVariants[patternKey] = (p.hookVariants[patternKey] || 0) + 1;
@@ -674,4 +679,150 @@ function escapeHtml(str){
     '"': '&quot;',
     "'": '&#039;'
   }[c]));
+}
+
+// ---------------------------------------------------------------------------
+// Export to Google Doc — creates a brand-new Google Doc (via Google Docs API)
+// containing the full Pattern (Section 1/2/3 spoken script only — no producer
+// notes, no metadata, no internal labels) and opens it in a new tab.
+//
+// Setup required once, in Google Cloud Console:
+//   1. Create/select a project -> APIs & Services -> Library ->
+//      enable "Google Docs API" and "Google Drive API".
+//   2. APIs & Services -> Credentials -> Create Credentials -> OAuth client ID
+//      -> Application type: Web application.
+//   3. Under "Authorized JavaScript origins" add this site's exact origin
+//      (e.g. https://towtongisgod.github.io — no trailing slash, no path).
+//   4. Copy the Client ID into config/google-integration.js (GOOGLE_DOCS_CONFIG.clientId).
+//   5. OAuth consent screen: while unpublished ("Testing"), add your own
+//      Google account under "Test users" or the export button will fail to
+//      authorize for anyone else.
+// The drive.file scope only grants access to files this app itself creates —
+// it never sees the rest of the signed-in user's Drive.
+// ---------------------------------------------------------------------------
+const googleAuthState = { tokenClient: null, accessToken: null, expiresAt: 0 };
+
+function getGoogleDocsConfig(){
+  return (typeof GOOGLE_DOCS_CONFIG !== 'undefined' && GOOGLE_DOCS_CONFIG) || { clientId: '', scopes: '' };
+}
+
+function ensureGoogleAccessToken(){
+  const config = getGoogleDocsConfig();
+  if (!config.clientId) {
+    return Promise.reject(new Error('MISSING_CLIENT_ID'));
+  }
+  if (typeof google === 'undefined' || !google.accounts?.oauth2) {
+    return Promise.reject(new Error('GOOGLE_SDK_NOT_LOADED'));
+  }
+  if (googleAuthState.accessToken && Date.now() < googleAuthState.expiresAt - 30000) {
+    return Promise.resolve(googleAuthState.accessToken);
+  }
+  return new Promise((resolve, reject) => {
+    if (!googleAuthState.tokenClient) {
+      googleAuthState.tokenClient = google.accounts.oauth2.initTokenClient({
+        client_id: config.clientId,
+        scope: config.scopes,
+        callback: (response) => {
+          if (response.error) {
+            reject(new Error(response.error));
+            return;
+          }
+          googleAuthState.accessToken = response.access_token;
+          googleAuthState.expiresAt = Date.now() + (Number(response.expires_in) || 3600) * 1000;
+          resolve(googleAuthState.accessToken);
+        },
+        error_callback: (err) => reject(new Error(err?.type || 'GOOGLE_AUTH_ERROR'))
+      });
+    }
+    googleAuthState.tokenClient.requestAccessToken({ prompt: googleAuthState.accessToken ? '' : 'consent' });
+  });
+}
+
+// Pure function (no DOM/network) — builds the plain-text body plus the bold
+// header ranges for the Docs API batchUpdate call. Kept separate from the
+// fetch calls so it stays easy to unit-test.
+function buildGoogleDocContent(packageItem){
+  const script = packageItem.mainSpokenScript;
+  const sections = [script.section1, script.section2, script.section3];
+  const account = packageItem.metadata.account || '';
+  const pattern = packageItem.metadata.assignedPattern || '';
+  const title = `${account} — Pattern ${pattern} — ${packageItem.metadata.scriptId || ''}`.trim();
+
+  const segments = [{ text: `${title}\n\n`, bold: true }];
+  sections.forEach((section, index) => {
+    segments.push({ text: `Section ${index + 1}: ${section.title}\n`, bold: true });
+    segments.push({ text: `${section.text}\n\n`, bold: false });
+  });
+
+  let cursor = 0;
+  const boldRanges = [];
+  segments.forEach(segment => {
+    const start = cursor;
+    const end = start + segment.text.length;
+    if (segment.bold) boldRanges.push({ start, end });
+    cursor = end;
+  });
+
+  return {
+    title,
+    fullText: segments.map(s => s.text).join(''),
+    boldRanges
+  };
+}
+
+async function exportToGoogleDoc(packageItem){
+  const config = getGoogleDocsConfig();
+  if (!config.clientId) {
+    setStatus('Warning: ยังไม่ได้ตั้งค่า Google Client ID — ใส่ค่าใน config/google-integration.js ก่อนใช้ Export to Google Doc');
+    return;
+  }
+
+  setStatus('Generating: กำลังขออนุญาตเข้าถึง Google Docs...');
+  let accessToken;
+  try {
+    accessToken = await ensureGoogleAccessToken();
+  } catch (err) {
+    setStatus(`Warning: เชื่อมต่อ Google ไม่สำเร็จ (${err.message}) — ลองใหม่อีกครั้ง`);
+    return;
+  }
+
+  const { title, fullText, boldRanges } = buildGoogleDocContent(packageItem);
+  setStatus('Generating: กำลังสร้าง Google Doc...');
+
+  let documentId;
+  try {
+    const createRes = await fetch('https://docs.googleapis.com/v1/documents', {
+      method: 'POST',
+      headers: { Authorization: `Bearer ${accessToken}`, 'Content-Type': 'application/json' },
+      body: JSON.stringify({ title })
+    });
+    if (!createRes.ok) throw new Error(`create failed (${createRes.status})`);
+    const created = await createRes.json();
+    documentId = created.documentId;
+
+    const requests = [{ insertText: { location: { index: 1 }, text: fullText } }];
+    boldRanges.forEach(range => {
+      requests.push({
+        updateTextStyle: {
+          range: { startIndex: range.start + 1, endIndex: range.end + 1 },
+          textStyle: { bold: true },
+          fields: 'bold'
+        }
+      });
+    });
+
+    const batchRes = await fetch(`https://docs.googleapis.com/v1/documents/${documentId}:batchUpdate`, {
+      method: 'POST',
+      headers: { Authorization: `Bearer ${accessToken}`, 'Content-Type': 'application/json' },
+      body: JSON.stringify({ requests })
+    });
+    if (!batchRes.ok) throw new Error(`write content failed (${batchRes.status})`);
+  } catch (err) {
+    setStatus(`Warning: สร้าง Google Doc ไม่สำเร็จ (${err.message})`);
+    return;
+  }
+
+  const docUrl = `https://docs.google.com/document/d/${documentId}/edit`;
+  window.open(docUrl, '_blank');
+  setStatus(`Generated: สร้าง Google Doc สำหรับ ${packageItem.metadata.scriptId} แล้ว เปิดลิงก์ในแท็บใหม่`);
 }
