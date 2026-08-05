@@ -303,6 +303,77 @@ console.log('\n=== TikTok-style multi-line Product/Gift parsing (no blank lines)
     !t7.productTruthValidation.blocked);
 }
 
+console.log('\n=== KISS/SKINOXY TikTok: cross-brand "+" bundle item no longer inflates item count ===');
+{
+  const kissBrand = brandsConfig.brands.find(b => b.id === 'kmb');
+  const kissKnowledge = readJson(path.join('data', kissBrand.knowledge_file));
+  const skinoxyBrand = brandsConfig.brands.find(b => b.id === 'skinoxy');
+  const skinoxyKnowledge = readJson(path.join('data', skinoxyBrand.knowledge_file));
+  const dgmrBrand = brandsConfig.brands.find(b => b.id === 'dgmr');
+  const dgmrKnowledge = readJson(path.join('data', dgmrBrand.knowledge_file));
+
+  function fullRun(brand, knowledge, text){
+    const p = core.parsePromotion(text, 0, knowledge, brand, {});
+    const item = pkg(p, 'A');
+    return { p, item };
+  }
+
+  // KISS Test 1: "+" joins a MAIN item with a cross-brand item and no
+  // confirmed gift/bundle keyword — the "+"-joined SKINOXY item must not be
+  // summed into KISS's own item count (previously: 1 + 10 = 11).
+  const kiss1 = fullRun(kissBrand, kissKnowledge, 'Nude & Naked Intense EDP 1 ขวด\n+ SKINOXY Toner Pad สีชมพู 10 แผ่น 1 ซอง\nพิเศษ 509 จากปกติ 1,039');
+  check('KISS 1: main item quantity is 1, NOT inflated by the cross-brand "+" item (was 11 before this fix)',
+    kiss1.p.itemCount === 1);
+  check('KISS 1: the cross-brand item is still surfaced (as an unconfirmed gift/bundle), not silently dropped',
+    /SKINOXY/i.test(kiss1.p.gift || ''));
+  check('KISS 1: normal 1,039 / promo 509 parsed correctly', kiss1.p.regular === 1039 && kiss1.p.promoPrice === 509);
+  check('KISS 1: no Critical Error, Main Script generates', !kiss1.item.generationBlocked);
+
+  // KISS Test 2: explicit cross-brand Gift Line.
+  const kiss2 = fullRun(kissBrand, kissKnowledge, 'Shower Gel กด 2 ขวด\nฟรี Skinoxy Toner Pad 10 แผ่น 1 ซอง สีชมพู');
+  check('KISS 2: main item quantity 2 (Shower Gel), not merged with the gift\'s own counts',
+    kiss2.p.itemCount === 2);
+  check('KISS 2: gift correctly identifies the SKINOXY Toner Pad', /Toner Pad/i.test(kiss2.p.gift || ''));
+  check('KISS 2: missing price only produces a (non-blocking) note, never a Product/Gift conflict',
+    !kiss2.item.generationBlocked);
+
+  // KISS Test 3: Product Options (choose one of two scents) + a same-brand
+  // gift — must not be read as "received both scents".
+  const kiss3 = fullRun(kissBrand, kissKnowledge, 'ซื้อน้ำหอม Nude & Naked หรือ Checkmate 1 ขวด\nฟรี Perfume Lotion Sweetie 200ml 1 ชิ้น');
+  check('KISS 3: main item quantity stays 1 (one bottle, choose one scent) — not summed to 2 for two scent names',
+    kiss3.p.itemCount === 1);
+  check('KISS 3: gift is the Sweetie lotion, no conflict, Main Script generates',
+    /Sweetie/i.test(kiss3.p.gift || '') && !kiss3.item.generationBlocked);
+
+  // SKINOXY Test 1: main + gift are different Package Types of the same
+  // Toner Pad family (jar vs. sachet) — must not be flagged as a conflict.
+  const skinoxy1 = fullRun(skinoxyBrand, skinoxyKnowledge, 'ซื้อ Toner Pad สีชมพูแบบกระปุก 1 กระปุก\nฟรี Toner Pad สีชมพูแบบซอง 10 แผ่น 1 ซอง');
+  check('SKINOXY 1: jar (main) and sachet (gift) do not collide into a Product/Gift conflict',
+    !skinoxy1.item.generationBlocked);
+
+  // SKINOXY Test 4: two different Sunscreen products (face vs. body) sharing
+  // the word "Sunscreen" must not conflict just because the name overlaps.
+  const skinoxy4 = fullRun(skinoxyBrand, skinoxyKnowledge, 'ซื้อ PRO MOISTURE UV SUNSCREEN 40ml 1 ชิ้น\nฟรี PRO UV SUNSCREEN BODY LOTION 1 ชิ้น');
+  check('SKINOXY 4: Face Sunscreen (main) and Body Sunscreen Lotion (gift) do not conflict on the shared word "Sunscreen"',
+    !skinoxy4.item.generationBlocked);
+  check('SKINOXY 4: main item quantity stays 1 (not inflated by the gift line)', skinoxy4.p.itemCount === 1);
+
+  // DGMR Golden Regression — byte-for-byte same fields as before this
+  // session's fix (verified separately against a pre-fix snapshot of
+  // core.js; these are the same two fixture promotions re-asserted here so
+  // a future change that breaks DGMR fails a checked-in test, not just an
+  // ad-hoc snapshot diff).
+  const dgmr1 = core.parsePromotion('เซตแชมพู 2 ขวด + ครีมนวด 1 ขวด\nรับฟรี ผ้าโพกผมซับน้ำ 1 ชิ้น มูลค่า 399\nราคาปกติ 4,269 พิเศษ 2,490', 0, dgmrKnowledge, dgmrBrand, {});
+  check('DGMR 1 (golden): itemCount 3, gift towel, normal 4269 / promo 2490 — unchanged by this session\'s fix',
+    dgmr1.itemCount === 3 && /ผ้าโพกผมซับน้ำ/.test(dgmr1.gift || '') && dgmr1.regular === 4269 && dgmr1.promoPrice === 2490);
+  check('DGMR 1 (golden): no Critical Error', !dgmr1.productTruthValidation.blocked);
+
+  const dgmr2 = core.parsePromotion('เซตแชมพู 1 ขวด + ครีมนวด 1 ขวด + โทนิค 1 ขวด\nรับฟรี ผ้าโพกผมซับน้ำ 1 ชิ้น\nราคาปกติ 3,969 พิเศษ 2,290', 0, dgmrKnowledge, dgmrBrand, {});
+  check('DGMR 2 (golden): itemCount 3, normal 3969 / promo 2290 — unchanged by this session\'s fix',
+    dgmr2.itemCount === 3 && dgmr2.regular === 3969 && dgmr2.promoPrice === 2290);
+  check('DGMR 2 (golden): no Critical Error', !dgmr2.productTruthValidation.blocked);
+}
+
 console.log('\n=== Script generation, compliance, and structure ===');
 const BANNED = ['ตะกร้าสีเหลือง', 'ครับ', 'ค่ะ', 'นะครับ', 'นะคะ', 'รักษา', 'หายขาด', 'Session 1', 'Session 2', 'Session 3'];
 // Guide/outline language that must never survive into the spoken script — the Section

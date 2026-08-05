@@ -166,25 +166,59 @@ function hasExplicitGiftMarker(text){
   return /(?:พร้อม)?รับฟรี|ของแถม|แถม|(?<!รับ)ฟรี|(?:ได้รับ|รับ)\s*(?:Post\s*Card|Postcard|โปสการ์ด)/i.test(String(text || ''));
 }
 
-function extractIncludedProducts(text){
+// Literal brand names to recognize when a "+"-joined item names a DIFFERENT
+// brand than the promotion's own account (e.g. a KISS promotion's "+
+// SKINOXY Toner Pad..." bundle/gift line). Small and explicit on purpose —
+// this app only ever has these three brands — not a general lexicon.
+const CROSS_BRAND_NAME_TOKENS = {
+  skinoxy: ['SKINOXY'],
+  kiss: ['KISS', 'KMB'],
+  kmb: ['KISS', 'KMB'],
+  dgmr: ['DGMR', 'DAENG GI MEO RI']
+};
+
+function getOtherBrandNameTokens(ownBrandKey){
+  const own = String(ownBrandKey || '').toLowerCase();
+  return Object.entries(CROSS_BRAND_NAME_TOKENS)
+    .filter(([key]) => key !== own)
+    .flatMap(([, tokens]) => tokens)
+    .filter((token, index, all) => all.indexOf(token) === index);
+}
+
+function extractIncludedProducts(text, ownBrandKey){
   const beforePrice = extractPrePriceText(String(text || ''))
     .split(/(?:พร้อม)?รับฟรี|ของแถม|แถม|(?<!รับ)ฟรี|(?:ได้รับ|รับ)\s*(?=(?:Post\s*Card|Postcard|โปสการ์ด))/i)[0];
   const unitPattern = '(?:ชิ้น|ตัว|หลอด|ขวด|กระปุก|ซอง|ชุด|เซ็ต|กล่อง|แพ็ก|แพค|ใบ|แผ่น)';
   const matcher = new RegExp(`(?:^|[+]|และ|พร้อม)\\s*([^+\\n]*?)\\s+(\\d+(?:\\.\\d+)?)\\s*(${unitPattern})`, 'gi');
+  const otherBrandTokens = getOtherBrandNameTokens(ownBrandKey);
   const entries = [];
+  const crossBrandEntries = [];
   let match;
   while ((match = matcher.exec(beforePrice)) !== null) {
     const name = cleanupPhrase(match[1].replace(/^(?:โปร|โปรโมชั่น|เซ็ต|ชุด)\s*/i, ''));
     if (!name) continue;
-    entries.push({ name, count: Number(match[2]), unit: match[3] });
+    const entry = { name, count: Number(match[2]), unit: match[3] };
+    // A "+"-joined segment that explicitly names a DIFFERENT brand is a
+    // cross-brand bundle/gift item, not another unit of the main product —
+    // it must not inflate this promotion's own item count.
+    if (ownBrandKey && otherBrandTokens.some(token => name.toUpperCase().includes(token))) {
+      crossBrandEntries.push(entry);
+      continue;
+    }
+    entries.push(entry);
   }
 
-  if (!entries.length) {
+  if (!entries.length && !crossBrandEntries.length) {
     const direct = beforePrice.match(new RegExp(`^\\s*(.*?)\\s+(\\d+(?:\\.\\d+)?)\\s*(${unitPattern})`, 'i'));
     if (direct && cleanupPhrase(direct[1])) {
       entries.push({ name: cleanupPhrase(direct[1]), count: Number(direct[2]), unit: direct[3] });
     }
   }
+  // Attached rather than changing the return shape everywhere this array is
+  // already consumed (itemCount math, Product Truth display) — callers that
+  // care about cross-brand bundle items read entries.crossBrandEntries;
+  // everyone else keeps working with a plain array exactly as before.
+  entries.crossBrandEntries = crossBrandEntries;
   return entries;
 }
 
@@ -235,8 +269,8 @@ function extractGiftCount(gift){
   return match ? Number(match[1]) : 1;
 }
 
-function extractItemCount(rawText, mainProductText, matchedProducts = [], knowledge = null){
-  const includedProducts = extractIncludedProducts(rawText);
+function extractItemCount(rawText, mainProductText, matchedProducts = [], knowledge = null, ownBrandKey = null){
+  const includedProducts = extractIncludedProducts(rawText, ownBrandKey);
   if (includedProducts.length) return includedProducts.reduce((sum, item) => sum + item.count, 0);
 
   if ((knowledge?.brand_id || '').toLowerCase() === 'dgmr') {
@@ -835,9 +869,8 @@ function parsePromotion(text, index, knowledge, brand = null, style = null){
     ? Math.round(promoPrice * (1 - coupon / 100))
     : null;
   const finalPrice = explicitFinalPrice || calculatedFinalPrice;
-  const gift = extractGift(cleaned, knowledge);
+  let gift = extractGift(cleaned, knowledge);
   const giftValue = moneyAfter(cleaned, [/มูลค่า\s*([\d,]+(?:\.\d+)?)/i]);
-  const giftCount = extractGiftCount(gift);
   const limited = /จำนวน\s*จำกัด|limited/i.test(cleaned);
   const rights = extractRights(cleaned);
   const liveOnly = extractLiveOnly(cleaned);
@@ -850,8 +883,18 @@ function parsePromotion(text, index, knowledge, brand = null, style = null){
   const selectedFragrances = findSelectedFragranceVariants(cleaned, knowledge);
   const title = extractPromotionTitle(prePriceText);
   const productLines = extractProductLines(prePriceText);
-  const includedProducts = extractIncludedProducts(cleaned);
-  const itemCount = extractItemCount(cleaned, mainProductText, matchedProducts, knowledge);
+  const includedProducts = extractIncludedProducts(cleaned, account?.brand_key);
+  // A "+"-joined item naming a different brand (e.g. a KISS promotion's "+
+  // SKINOXY Toner Pad...") is a cross-brand bundle/gift, not another unit of
+  // the main product — extractIncludedProducts already keeps it out of the
+  // count; if no explicit gift line was found elsewhere, surface it here so
+  // it's visible for review instead of silently vanishing.
+  if (!gift && includedProducts.crossBrandEntries?.length) {
+    const crossBrandItem = includedProducts.crossBrandEntries[0];
+    gift = `${crossBrandItem.name} ${crossBrandItem.count} ${crossBrandItem.unit}`.trim();
+  }
+  const giftCount = extractGiftCount(gift);
+  const itemCount = extractItemCount(cleaned, mainProductText, matchedProducts, knowledge, account?.brand_key);
   const totalCount = itemCount ? itemCount + giftCount : giftCount || null;
   const quantity = extractQuantity(mainProductText);
   const discount = regular && promoPrice ? regular - promoPrice : null;
