@@ -4,6 +4,7 @@
 const fs = require('fs');
 const path = require('path');
 const core = require('../core.js');
+const parserV2 = require('../parser-v2.js');
 
 const root = path.join(__dirname, '..');
 let passed = 0;
@@ -883,6 +884,124 @@ check('Code.gs preserves Natural Speech Engine line breaks (one Doc paragraph pe
   appsScriptCode.includes("split('\\n')") && appsScriptCode.includes('body.insertParagraph(at, line)'));
 check('Code.gs response shape matches the documented success contract', appsScriptCode.includes('documentId:') && appsScriptCode.includes('documentUrl:') && appsScriptCode.includes('documentTitle:') && appsScriptCode.includes('createdAt:'));
 check('Code.gs response shape matches the documented error contract', appsScriptCode.includes('errorCode:') && appsScriptCode.includes('success: false'));
+
+console.log('\n=== Promotion Parser V2 ===');
+
+// --- Text normalization ---
+check('normalizeTextV2 collapses repeated spaces', parserV2.normalizeTextV2('a   b') === 'a b');
+check('normalizeTextV2 collapses 3+ blank lines to 2', parserV2.normalizeTextV2('a\n\n\n\nb') === 'a\n\nb');
+check('normalizeTextV2 normalizes CRLF/CR to LF', parserV2.normalizeTextV2('a\r\nb\rc') === 'a\nb\nc');
+check('normalizeTextV2 strips non-breaking space / zero-width chars', parserV2.normalizeTextV2('a b​c').replace(/\s+/g, ' ') === 'a b c');
+check('normalizeTextV2 trims trailing spaces per line', parserV2.normalizeTextV2('a   \nb').split('\n')[0] === 'a');
+
+// --- Brand alias ---
+check('findBrandAliasMatch: "KMB" normalizes to kiss', parserV2.findBrandAliasMatch('KMB 5-9 สิงหา').brand === 'kiss');
+check('findBrandAliasMatch: "KISS MY BODY" resolves to kiss', parserV2.findBrandAliasMatch('KISS MY BODY').brand === 'kiss');
+check('findBrandAliasMatch: "SKINOXY" resolves to skinoxy', parserV2.findBrandAliasMatch('SKINOXY Toner Pad').brand === 'skinoxy');
+check('findBrandAliasMatch: "DGMR" resolves to dgmr', parserV2.findBrandAliasMatch('DGMR 5-9 สิงหา').brand === 'dgmr');
+check('findBrandAliasMatch: no match returns null', parserV2.findBrandAliasMatch('random text with no brand') === null);
+check('findBrandByProductSignal: "Nude and Naked" resolves to kiss', parserV2.findBrandByProductSignal('Nude and Naked EDP') === 'kiss');
+check('findBrandByProductSignal: "Toner Pad" resolves to skinoxy', parserV2.findBrandByProductSignal('Dewy Toner Pad') === 'skinoxy');
+check('findBrandByProductSignal: "แชมพู" resolves to dgmr', parserV2.findBrandByProductSignal('เซตแชมพู 2 ขวด') === 'dgmr');
+
+// --- The full mixed-brand fixture (Required Test Fixture) ---
+const mixedFixtureRaw = readText('tests/fixtures/mixed-brand-promotions.txt');
+const parsed = parserV2.parsePromotionTextV2(mixedFixtureRaw, {});
+
+check('Parser V2 fixture: detects exactly 13 promotions', parsed.promotions.length === 13, `got ${parsed.promotions.length}`);
+
+if (parsed.promotions.length === 13) {
+  const [p1, p2, p3, p4, p5, p6, p7, p8, p9, p10, p11, p12, p13] = parsed.promotions;
+
+  // Anti-Failure Rule #13: KMB must normalize to KISS everywhere.
+  check('Parser V2: every promotion brand is a canonical label (KISS/SKINOXY/DGMR), never raw "KMB"',
+    parsed.promotions.every(p => ['KISS', 'SKINOXY', 'DGMR'].includes(p.brand)));
+
+  // 1. EDP Intense
+  check('Promo 1: brand KISS', p1.brand === 'KISS');
+  check('Promo 1: main items are Checkmate + Nude and Naked', p1.items.length === 2 && /checkmate/i.test(p1.items[0].productName) && /nude/i.test(p1.items[1].productName));
+  check('Promo 1: gift is the Sweetie lotion, not a fabricated product', /sweetie/i.test(p1.gifts[0].productName));
+  check('Promo 1: normal/promo/final price 990/261/261', p1.pricing.normalPrice === 990 && p1.pricing.promotionPrice === 261 && p1.pricing.finalPrice === 261);
+
+  // 2. Perfume Set 3 pieces
+  check('Promo 2: 3 main items (Shower Gel, Lotion, EDT)', p2.items.length === 3);
+  check('Promo 2: normal 937, promo 449, live/final 416 (Live Price outranks Promotion Price)',
+    p2.pricing.normalPrice === 937 && p2.pricing.promotionPrice === 449 && p2.pricing.livePrice === 416 && p2.pricing.finalPrice === 416);
+
+  // 3. Shower Gel Mix 2 + cross-brand gift
+  check('Promo 3: main item is KISS, quantity 2, mixable', p3.items[0].brand === 'kiss' && p3.items[0].quantity === 2 && p3.items[0].mixable === true);
+  check('Promo 3: gift is SKINOXY (cross-brand) — does NOT change the promotion\'s own brand', p3.gifts[0].brand === 'skinoxy' && p3.brand === 'KISS');
+  check('Promo 3: normal 798, final 321', p3.pricing.normalPrice === 798 && p3.pricing.finalPrice === 321);
+
+  // 4. Whipped Cream Scrub + Sweet Vanilla Cotton, with Scent Notes
+  check('Promo 4: 2 main products', p4.items.length === 2);
+  check('Promo 4: Scent Notes are attached to the product, not a fabricated 3rd item',
+    p4.items[1].scentNotes.top.length > 0 && p4.items[1].scentNotes.middle.length > 0 && p4.items[1].scentNotes.base.length > 0);
+  check('Promo 4: normal 798, final 321', p4.pricing.normalPrice === 798 && p4.pricing.finalPrice === 321);
+
+  // 5. Toner Pad Exchange Purchase
+  check('Promo 5: mechanic is EXCHANGE_PURCHASE, not a regular bundle', p5.mechanic.type === 'EXCHANGE_PURCHASE' && p5.mechanic.exchangePurchase === true);
+  check('Promo 5: exchange price 88 is NOT mistaken for the main product\'s full-set price', p5.pricing.exchangePrice === 88 && p5.pricing.finalPrice === 88);
+  check('Promo 5: has the "missing prerequisite" warning (spec Example 3)', p5.warnings.some(w => w.code === 'EXCHANGE_MISSING_PREREQUISITE'));
+
+  // 6/7. Set 1 and Set 2 must be SEPARATE promotions, not merged, and the
+  // "แพคคู่ทำความสะอาดผิวครบสูตร" Group Title must not become its own promo.
+  check('Promo 6 (Set 1) and Promo 7 (Set 2) are different promotions', p6.id !== p7.id);
+  check('Promo 6: Set 1 has its own price (309/538/195)', p6.pricing.normalPrice === 538 && p6.pricing.promotionPrice === 309 && p6.pricing.finalPrice === 195);
+  check('Promo 7: Set 2 has its own DIFFERENT price (499/697/321), not Set 1\'s', p7.pricing.normalPrice === 697 && p7.pricing.finalPrice === 321);
+  check('Promo 7: quantity 2 + mixable + gift PRO VIT C BOOSTER SERUM', p7.items[0].quantity === 2 && p7.items[0].mixable === true && /vit c booster/i.test(p7.gifts[0].productName));
+  check('No promotion in the fixture is an empty Group-Title phantom', parsed.promotions.every(p => p.items.length > 0 || p.gifts.length > 0));
+
+  // 8. Mix 2 Get 1
+  check('Promo 8: mixAndMatch true, gift Bright & Smooth Scrub Mask', p8.mechanic.mixAndMatch === true && /scrub mask/i.test(p8.gifts[0].productName));
+  check('Promo 8: normal 798, promo 439, live/final 299', p8.pricing.normalPrice === 798 && p8.pricing.promotionPrice === 439 && p8.pricing.finalPrice === 299);
+
+  // 9. Face Sunscreen Buy 1 Get Body Sunscreen — the "+" inside "SPF50+" is
+  // NOT a bundle delimiter (Anti-Failure: cosmetic notation vs. real "+").
+  check('Promo 9: main item is the ONE sunscreen product, not split on "SPF50+"', p9.items.length === 1 && /sunscreen/i.test(p9.items[0].productName));
+  check('Promo 9: gift is the body lotion sunscreen', /body lotion/i.test(p9.gifts[0].productName));
+  check('Promo 9: normal 799, promo 499, live/final 321', p9.pricing.normalPrice === 799 && p9.pricing.promotionPrice === 499 && p9.pricing.finalPrice === 321);
+
+  // 10/11. Postfix KMB section — brand + date resolved backward, cross-brand
+  // gift does not change the main brand.
+  check('Promo 10: brand resolved to KISS via postfix "KMB 5-9 สิงหา" marker (not left null)', p10.brand === 'KISS');
+  check('Promo 10: main item Nude & Naked EDP, gift is SKINOXY Toner Pad (does not flip promotion brand)',
+    /nude/i.test(p10.items[0].productName) && p10.gifts[0].brand === 'skinoxy' && p10.brand === 'KISS');
+  check('Promo 10: normal 1039, final 509', p10.pricing.normalPrice === 1039 && p10.pricing.finalPrice === 509);
+  check('Promo 10: date resolved to the postfix marker, flagged as inferred (not silently guessed)',
+    /5-9/.test(p10.dateRange.originalText) && p10.dateRange.confidence < 1);
+  check('Promo 11: brand ALSO resolved to KISS via the same postfix marker', p11.brand === 'KISS');
+  check('Promo 11: no price mentioned — Missing Price warning, price is null (never borrowed from a neighboring promotion)',
+    p11.pricing.finalPrice === null && p11.warnings.some(w => w.code === 'MISSING_PRICE'));
+
+  // 12/13. Postfix DGMR section.
+  check('Promo 12: brand resolved to DGMR via postfix "DGMR 5-9 สิงหา" marker', p12.brand === 'DGMR');
+  check('Promo 12: 2 main items (shampoo + conditioner), gift towel with its OWN value untouched as a price',
+    p12.items.length === 2 && p12.gifts[0].value === 399 && p12.pricing.normalPrice === 4269 && p12.pricing.finalPrice === 2490);
+  check('Promo 13: brand ALSO resolved to DGMR, 3 main items (shampoo + conditioner + tonic)', p13.brand === 'DGMR' && p13.items.length === 3);
+  check('Promo 13: normal 3969, final 2290', p13.pricing.normalPrice === 3969 && p13.pricing.finalPrice === 2290);
+
+  // Anti-Failure Rules (spot checks not already covered above)
+  check('Anti-Failure: Campaign coupons (10% + 30%) are stored separately, never summed into 40% or a price',
+    p1.campaignBenefits.every(b => b.type === 'COUPON' && b.scope === 'CAMPAIGN') && !parsed.promotions.some(p => p.pricing.finalPrice === 40));
+  check('Anti-Failure: Hashtags never become a product/promotion', !parsed.promotions.some(p => /#KissMyBody/.test(p.title || '')));
+}
+
+// --- Missing / incomplete data must never be fabricated ---
+{
+  const noPriceResult = parserV2.parsePromotionTextV2('✨ Shower Gel กด 2 ขวด\nฟรี Skinoxy Toner Pad 1 ซอง', {});
+  const promo = noPriceResult.promotions[0];
+  check('Missing price: promotion is still created with correct gift, price stays null (not borrowed)',
+    promo && promo.gifts.length === 1 && promo.pricing.finalPrice === null);
+  check('Missing price: MISSING_PRICE warning present', promo && promo.warnings.some(w => w.code === 'MISSING_PRICE'));
+}
+
+// --- Duplicate link detection ---
+{
+  const dupResult = parserV2.parsePromotionTextV2('✨ Test Promo\nhttps://s.shopee.co.th/aaa\nToner Pad 1 กระปุก\nhttps://s.shopee.co.th/bbb\nราคาปกติ 100 พิเศษ 50', {});
+  check('Duplicate link: a second URL inside one promotion raises a warning',
+    dupResult.warnings.some(w => w.code === 'DUPLICATE_LINK_IN_PROMOTION'));
+}
 
 console.log(`\n${passed} passed, ${failed} failed`);
 if (failed > 0) process.exitCode = 1;
