@@ -116,22 +116,50 @@ function extractPrePriceText(text){
   return String(match ? match[1] : text).trim();
 }
 
+// A gift keyword sitting at the start of its own line (ignoring leading
+// emoji/bullets/whitespace) is a dedicated Gift Line — the spec's highest-
+// priority source. The same keyword appearing mid-sentence inside a
+// Promotion Title ("...1 แถม 1 กันแดดตัว") is just descriptive copy and
+// should lose to a dedicated line elsewhere in the same text.
+function isDedicatedGiftLine_(text, matchIndex){
+  const lineStart = text.lastIndexOf('\n', matchIndex - 1) + 1;
+  const prefix = text.slice(lineStart, matchIndex);
+  return /^[\s🎁🏷️✨🔥\-•*!:.]*$/.test(prefix);
+}
+
 function extractGift(text, knowledge){
-  const stopWords = 'มูลค่า|ราคาปกติ|จากปกติ|ราคาโปร|ราคาพิเศษ|ในราคา|Price\\s*:|Final|คูปอง|เหลือ(?!ง)(?:เพียง)?|จำนวน\\s*จำกัด|>>|https?:\\/\\/|\\n\\s*[*\\-•]|\\n\\s*\\n|$';
-  const receiveFree = text.match(new RegExp(`(?:พร้อม)?รับฟรี\\s*([\\s\\S]*?)(?=\\s*(?:${stopWords}))`, 'i'));
-  if (receiveFree) return cleanupPhrase(receiveFree[1]);
+  // A plain line break is itself a stop boundary (not just a blank line or a
+  // bulleted one) — TikTok-style captions routinely put the gift on its own
+  // short line with no blank line before the next clause (price, another
+  // product, a brand/date marker), and without this the lazy match below
+  // would keep consuming text across every following line until it finally
+  // hit one of the more specific stop words (or ran out of text).
+  const stopWords = 'มูลค่า|ราคาปกติ|จากปกติ|ราคาโปร|ราคาพิเศษ|ในราคา|Price\\s*:|Final|คูปอง|เหลือ(?!ง)(?:เพียง)?|จำนวน\\s*จำกัด|>>|https?:\\/\\/|\\n|$';
+  const patterns = [
+    new RegExp(`(?:พร้อม)?รับฟรี\\s*([\\s\\S]*?)(?=\\s*(?:${stopWords}))`, 'gi'),
+    new RegExp(`(?:ของแถม|แถม)\\s*([\\s\\S]*?)(?=\\s*(?:${stopWords}))`, 'gi'),
+    // Bare "ฟรี X" (no "รับ" or "แถม" in front) — another common real-world phrasing.
+    new RegExp(`(?<!รับ)ฟรี\\s*([\\s\\S]*?)(?=\\s*(?:${stopWords}))`, 'gi'),
+    new RegExp(`(?:ได้รับ|รับ)\\s*((?:Post\\s*Card|Postcard|โปสการ์ด)[\\s\\S]*?)(?=\\s*(?:${stopWords}))`, 'gi')
+  ];
 
-  const explicitGift = text.match(new RegExp(`(?:ของแถม|แถม)\\s*([\\s\\S]*?)(?=\\s*(?:${stopWords}))`, 'i'));
-  if (explicitGift) return cleanupPhrase(explicitGift[1]);
-
-  // Bare "ฟรี X" (no "รับ" or "แถม" in front) — another common real-world phrasing.
-  const bareFree = text.match(new RegExp(`(?<!รับ)ฟรี\\s*([\\s\\S]*?)(?=\\s*(?:${stopWords}))`, 'i'));
-  if (bareFree && bareFree[1]) return cleanupPhrase(bareFree[1]);
-
-  const received = text.match(new RegExp(`(?:ได้รับ|รับ)\\s*((?:Post\\s*Card|Postcard|โปสการ์ด)[\\s\\S]*?)(?=\\s*(?:${stopWords}))`, 'i'));
-  if (received && received[1]) return cleanupPhrase(received[1]);
-
-  return null;
+  // Collect every candidate match across all patterns, then prefer a
+  // dedicated Gift Line over one embedded in a Title/description sentence;
+  // among equally-ranked candidates, keep the first pattern's first match
+  // (unchanged behavior when there's only one candidate, as in almost every
+  // existing case).
+  const candidates = [];
+  patterns.forEach(re => {
+    let m;
+    re.lastIndex = 0;
+    while ((m = re.exec(text))) {
+      if (m[1]) candidates.push({ value: cleanupPhrase(m[1]), index: m.index, dedicated: isDedicatedGiftLine_(text, m.index) });
+    }
+  });
+  if (!candidates.length) return null;
+  const dedicated = candidates.filter(c => c.dedicated && c.value);
+  const best = (dedicated[0] || candidates.find(c => c.value));
+  return best ? best.value : null;
 }
 
 function hasExplicitGiftMarker(text){
@@ -730,27 +758,53 @@ function normalizeTruthName(value){
   return normalizeForMatch(String(value || '').replace(/\d+(?:\.\d+)?\s*(?:ชิ้น|ตัว|หลอด|ขวด|กระปุก|ซอง|ชุด|เซ็ต|กล่อง|แพ็ก|แพค|ใบ|แผ่น)/gi, ''));
 }
 
+// Detects an EXPLICIT "Buy X Get Y" phrasing where the gift is legitimately
+// the same SKU as a main product ("1 แถม 1", "ซื้อ 1 รับฟรี 1", "กด 2 แถม 1",
+// "ซื้อ...รับ...เดียวกัน/สูตรเดียวกัน/เพิ่ม"). When this is present, the same
+// product name appearing as both a main item AND a gift is the whole point
+// of the promotion, not a data conflict.
+function hasSameProductGiftMechanic(raw){
+  const text = String(raw || '');
+  return /\d+\s*แถม\s*\d+/.test(text)
+    || /ซื้อ[\s\S]{0,30}?รับ(?:ฟรี)?[\s\S]{0,30}?(?:เดียวกัน|สูตรเดียวกัน|ชิ้นเดิม|แบบเดิม)/i.test(text)
+    || /ซื้อ[\s\S]{0,20}?รับฟรี[\s\S]{0,20}?(?:อีก|เพิ่ม)/i.test(text)
+    // "ซื้อ 1 รับฟรี 1" / "ซื้อ...รับฟรี..." on its own is already the classic
+    // Buy-One-Get-One phrasing (spec example) — doesn't need a trailing
+    // "อีก"/"เพิ่ม" to count.
+    || /ซื้อ\s*\d+[\s\S]{0,20}?รับฟรี[\s\S]{0,20}?\d+/i.test(text);
+}
+
 function validateProductTruth(p){
   const errors = [];
+  const warnings = [];
   const raw = String(p.raw || '');
   const includedProducts = p.includedProducts || [];
   const includedCount = includedProducts.reduce((sum, item) => sum + Number(item.count || 0), 0);
   const giftName = normalizeTruthName(p.gift);
-  const duplicate = giftName && includedProducts.some(item => {
+  const matchingIncluded = giftName && includedProducts.find(item => {
     const productName = normalizeTruthName(item.name);
     return productName && (productName.includes(giftName) || giftName.includes(productName));
   });
+  const sameProductGiftMechanic = Boolean(matchingIncluded) && hasSameProductGiftMechanic(raw);
 
   if (hasExplicitGiftMarker(raw) && !p.gift) errors.push({ code: 'EXPLICIT_GIFT_NOT_PARSED', message: 'พบคำระบุของแถม แต่ไม่สามารถอ่านชื่อของแถมได้' });
   if (includedCount && p.itemCount !== includedCount) errors.push({ code: 'PRODUCT_COUNT_MISMATCH', message: `จำนวนสินค้าที่อ่านได้ ${includedCount} ชิ้น ไม่ตรงกับจำนวนที่ใช้คำนวณ ${p.itemCount || 0} ชิ้น` });
-  if (duplicate) {
-    errors.push({ code: 'DUPLICATE_PRODUCT_GIFT', message: 'สินค้ารายการเดียวกันถูกจัดเป็นทั้งสินค้าในเซ็ตและของแถม' });
-    errors.push({ code: 'PRODUCT_GIFT_CONFLICT', message: 'ข้อมูลสินค้าและของแถมขัดแย้งกัน กรุณาแก้หรือยืนยัน Input' });
+  // The same product name showing up as both a main item and a gift is far
+  // more often the SAME mention repeated across Title/Detail/Gift-line, or a
+  // genuine "Buy X Get Y" of the same SKU, than an actual data conflict — so
+  // this is now a non-blocking Warning (surfaced for review) instead of a
+  // hard-blocking Critical Error, UNLESS an explicit Buy-X-Get-Y phrase
+  // confirms it's intentional, in which case it isn't even a warning.
+  if (matchingIncluded && !sameProductGiftMechanic) {
+    warnings.push({
+      code: 'PRODUCT_GIFT_SAME_NAME_UNCONFIRMED',
+      message: `พบว่า "${p.gift}" ถูกกล่าวถึงทั้งในรายการสินค้าและของแถม แต่ไม่พบคำยืนยันกลไก เช่น "1 แถม 1" กรุณาตรวจสอบว่าเป็นของแถมชิ้นเดียวกับสินค้า หรือเป็นคนละรายการ`
+    });
   }
   if (p.averagePrice !== null && p.averagePrice !== undefined && (!p.itemCount || p.itemCount <= 0 || !Number.isFinite(p.averagePrice))) {
     errors.push({ code: 'PRICE_PER_ITEM_UNSAFE', message: 'จำนวนสินค้าไม่ปลอดภัยพอสำหรับคำนวณราคาต่อชิ้น' });
   }
-  return { valid: errors.length === 0, blocked: errors.length > 0, errors };
+  return { valid: errors.length === 0, blocked: errors.length > 0, errors, warnings, sameProductGiftMechanic };
 }
 
 function parsePromotion(text, index, knowledge, brand = null, style = null){
@@ -2641,6 +2695,7 @@ function buildPromotionSummary(p){
 function buildValidationNotes(p, assignment){
   const notes = [];
   (p.productTruthValidation?.errors || []).forEach(error => notes.push(`${error.code}: ${error.message}`));
+  (p.productTruthValidation?.warnings || []).forEach(warning => notes.push(`${warning.code}: ${warning.message}`));
   if (!p.regular || !p.promoPrice) notes.push('ข้อมูลราคาไม่ครบ จึงไม่คำนวณเปอร์เซ็นต์ส่วนลดหรือสรุปส่วนลดเกินจริง');
   if (!p.itemCount) notes.push('จำนวนชิ้นไม่ชัดเจน จึงไม่คำนวณราคาต่อชิ้น');
   if (p.warning) notes.push(p.warning);

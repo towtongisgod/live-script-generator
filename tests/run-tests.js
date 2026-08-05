@@ -222,13 +222,86 @@ const malformedPackage = pkg(malformedGift, 'A');
 check('unparsed explicit gift emits required error code', malformedGift.productTruthValidation.errors.some(error => error.code === 'EXPLICIT_GIFT_NOT_PARSED'));
 check('Product Truth conflict blocks normal script generation', malformedPackage.generationBlocked && malformedPackage.metadata.generationStatus === 'BLOCKED');
 check('blocked script gives a clear correction prompt', /แก้ Input|ยืนยันข้อมูล/.test(fullTextOf(malformedPackage)));
+// Same product name named as both a main item and a gift, with NO explicit
+// "1 แถม 1"-style mechanic to confirm intent — this used to hard-block
+// Generate via DUPLICATE_PRODUCT_GIFT/PRODUCT_GIFT_CONFLICT, but the real
+// world cause is almost always the SAME mention repeated across Title/
+// Detail/Gift-line, not an actual data conflict. It's now a non-blocking
+// Warning instead (surfaced for review), so Generate is never wrongly
+// blocked on ordinary repeated-mention input.
 const duplicateTruth = core.parsePromotion('Jingi Tonic 1 ขวด ราคาโปร 999 บาท รับฟรี Jingi Tonic 1 ขวด', 0, readJson('data/dgmr-products.json'), core.LSG_ACCOUNTS.find(item => item.id === 'dgmr'), {});
-check('duplicate product and gift emits DUPLICATE_PRODUCT_GIFT', duplicateTruth.productTruthValidation.errors.some(error => error.code === 'DUPLICATE_PRODUCT_GIFT'));
-check('duplicate product and gift emits PRODUCT_GIFT_CONFLICT', duplicateTruth.productTruthValidation.errors.some(error => error.code === 'PRODUCT_GIFT_CONFLICT'));
+check('same-name product/gift with no confirming mechanic no longer hard-blocks (DUPLICATE_PRODUCT_GIFT/PRODUCT_GIFT_CONFLICT are not Critical Errors)',
+  !duplicateTruth.productTruthValidation.errors.some(error => error.code === 'DUPLICATE_PRODUCT_GIFT' || error.code === 'PRODUCT_GIFT_CONFLICT'));
+check('...but is still surfaced as a Warning for the user to review', duplicateTruth.productTruthValidation.warnings.some(w => w.code === 'PRODUCT_GIFT_SAME_NAME_UNCONFIRMED'));
+check('same-name product/gift no longer blocks Main Script generation', !pkg(duplicateTruth, 'A').generationBlocked);
 const mismatchTruth = core.validateProductTruth({ raw: 'A 2 ขวด', includedProducts: [{ name: 'A', count: 2 }], itemCount: 1, gift: null, promoPrice: 100, averagePrice: 100 });
 check('mismatched included count emits PRODUCT_COUNT_MISMATCH', mismatchTruth.errors.some(error => error.code === 'PRODUCT_COUNT_MISMATCH'));
 const unsafePriceTruth = core.validateProductTruth({ raw: 'A ราคาโปร 100', includedProducts: [], itemCount: 0, gift: null, promoPrice: 100, averagePrice: Number.NaN });
 check('unsafe average emits PRICE_PER_ITEM_UNSAFE', unsafePriceTruth.errors.some(error => error.code === 'PRICE_PER_ITEM_UNSAFE'));
+
+console.log('\n=== TikTok-style multi-line Product/Gift parsing (no blank lines) ===');
+{
+  const skinoxyBrand = brandsConfig.brands.find(b => b.id === 'skinoxy');
+  const skinoxyKnowledge = readJson(path.join('data', skinoxyBrand.knowledge_file));
+  const kissBrand = brandsConfig.brands.find(b => b.id === 'kmb');
+  const kissKnowledge = readJson(path.join('data', kissBrand.knowledge_file));
+
+  // Test 1: Duplicate Gift Mention — the gift-worthy product name also
+  // appears (in mutated form, "1 แถม 1 กันแดดตัว") in the Promotion Title.
+  const t1 = core.parsePromotion(
+    'กันแดดหน้า 1 แถม 1 กันแดดตัว\nซื้อ SKINOXY PRO MOISTURE UV SUNSCREEN 1 ชิ้น\nฟรี SKINOXY PRO UV SUNSCREEN BODY LOTION 1 ชิ้น',
+    0, skinoxyKnowledge, skinoxyBrand, {}
+  );
+  check('Test 1: gift is the specific dedicated Gift Line, not the vague Title mention',
+    /BODY LOTION/i.test(t1.gift || ''));
+  check('Test 1: no Critical Error — Main Script can be generated', !t1.productTruthValidation.blocked);
+
+  // Test 2: same gift concept named in both Title ("แถมโทนเนอร์แพด") and its
+  // own explicit Gift Line — the explicit line must win, Title is just
+  // supporting context, not a second gift.
+  const t2 = core.parsePromotion(
+    'เจลอาบน้ำ 2 ขวด แถมโทนเนอร์แพด\nPerfume Shower Gel คละได้ 2 ขวด\nฟรี SKINOXY Toner Pad สีชมพู 1 ซอง',
+    0, kissKnowledge, kissBrand, {}
+  );
+  check('Test 2: gift resolves to the specific SKINOXY Toner Pad line (Explicit Gift Line beats Title mention)',
+    /SKINOXY Toner Pad/i.test(t2.gift || ''));
+  check('Test 2: main item quantity is 2 (Title\'s "2 ขวด" is a confirming repeat, not additional stock)',
+    t2.itemCount === 2);
+  check('Test 2: no Critical Error', !t2.productTruthValidation.blocked);
+
+  // Test 3: same product as both Main and Gift, WITH an explicit
+  // Buy-One-Get-One phrase confirming intent — must not warn or block.
+  const t3 = core.parsePromotion(
+    'Toner Pad 1 กระปุก ราคาโปร 199 บาท ซื้อ 1 รับฟรี Toner Pad 1 กระปุก',
+    0, skinoxyKnowledge, skinoxyBrand, {}
+  );
+  check('Test 3: explicit Buy-1-Get-1 same product is recognized (sameProductGiftMechanic)',
+    t3.productTruthValidation.sameProductGiftMechanic === true);
+  check('Test 3: no warning and no blocking error when the mechanic is explicit',
+    t3.productTruthValidation.warnings.length === 0 && !t3.productTruthValidation.blocked);
+
+  // Test 6: Cross-Brand Gift — must never conflict, and must never flip the
+  // promotion's own brand to the gift's brand.
+  const t6 = core.parsePromotion(
+    'Perfume Shower Gel 2 ขวด\nฟรี SKINOXY Dewy & Hydrating Toner Pad 1 ซอง',
+    0, kissKnowledge, kissBrand, {}
+  );
+  check('Test 6: cross-brand gift does not block generation', !t6.productTruthValidation.blocked);
+  check('Test 6: cross-brand gift produces no warning either (this is a normal, valid pattern)',
+    t6.productTruthValidation.warnings.length === 0);
+
+  // Test 7 (Ambiguous): same product named as both an included line and a
+  // bare "X ฟรี" gift, no confirming mechanic — must warn, not silently
+  // merge or silently pick one.
+  const t7 = core.parsePromotion(
+    'Toner Pad สีชมพู 1 ซอง\nแถม Toner Pad สีชมพู 1 แผ่น',
+    0, skinoxyKnowledge, skinoxyBrand, {}
+  );
+  check('Test 7: ambiguous same-name product/gift raises a Warning for review (not silently resolved)',
+    t7.productTruthValidation.warnings.some(w => w.code === 'PRODUCT_GIFT_SAME_NAME_UNCONFIRMED'));
+  check('Test 7: warning does not hard-block Generate (Warning severity, not Critical Error)',
+    !t7.productTruthValidation.blocked);
+}
 
 console.log('\n=== Script generation, compliance, and structure ===');
 const BANNED = ['ตะกร้าสีเหลือง', 'ครับ', 'ค่ะ', 'นะครับ', 'นะคะ', 'รักษา', 'หายขาด', 'Session 1', 'Session 2', 'Session 3'];
