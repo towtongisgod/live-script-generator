@@ -475,21 +475,129 @@ check('Google Docs scopes are least-privilege (documents + drive.file only)',
 check('UI has Export to Google Doc button', appJs.includes('export-gdoc') && appJs.includes('Export to Google Doc'));
 check('Export to Google Doc button is wired to exportToGoogleDoc', appJs.includes("querySelector('.export-gdoc')") && appJs.includes('exportToGoogleDoc(packageItem)'));
 check('Missing Client ID shows a setup message instead of crashing', appJs.includes("ยังไม่ได้ตั้งค่า Google Client ID"));
+// 2026-08-05: a returning user who already granted access should not see the
+// full "wants access" consent screen every time — request a token silently
+// (prompt: '') first and only fall back to prompt: 'consent' if that fails.
+check('ensureGoogleAccessToken requests a token silently first (prompt: \'\'), not prompt: \'consent\', on every call',
+  appJs.includes("requestAccessToken({ prompt: '' })"));
+check('ensureGoogleAccessToken only falls back to prompt: \'consent\' after a silent attempt actually fails',
+  appJs.includes('triedConsentFallback') && appJs.includes("requestAccessToken({ prompt: 'consent' })"));
+check('exportToGoogleDoc bundles every promotion sharing the same account + Pattern, not just the clicked card',
+  appJs.includes('(state.lastPackages || []).filter(pkg =>') &&
+  appJs.includes('pkg.metadata.account === packageItem.metadata.account') &&
+  appJs.includes('pkg.metadata.assignedPattern === packageItem.metadata.assignedPattern'));
+
+// buildFullGoogleDocContent is now the FULL production-doc builder matching the
+// user-supplied reference template (approved scope change — 2026-08-05): Set
+// (a real Google Docs table, built in two passes — see exportToGoogleDoc),
+// per-promotion Section 1/2/3 + Closing Loop + Q&A, a team-only section
+// (Policy-Safe Word Guide, never read aloud), Sequence 2 Product Talk (real
+// ingredients/benefits from the knowledge base — no fabricated "how to use"
+// text, since no brand's data file has that field), How to Buy, and Short
+// Loop. It must still never leak raw JSON metadata dumps or internal notes.
+let gdocFns = {};
 {
-  // buildGoogleDocContent must only pull section.title / section.text (the visible
-  // spoken script) into the doc — never producer/validation notes or raw metadata dumps.
-  const fnStart = appJs.indexOf('function buildGoogleDocContent');
-  const fnEnd = appJs.indexOf('\n}', fnStart);
-  const fnBody = fnStart >= 0 && fnEnd > fnStart ? appJs.slice(fnStart, fnEnd) : '';
-  check('buildGoogleDocContent is found for inspection', fnBody.length > 0);
-  check('buildGoogleDocContent uses section.title and section.text', fnBody.includes('section.title') && fnBody.includes('section.text'));
-  ['producerNotes', 'validationNotes', 'producerPushLine', 'qAndA', 'policySafeGuide', 'metadataJson'].forEach(field => {
-    check(`buildGoogleDocContent does not pull in ${field}`, !fnBody.includes(field));
-  });
+  const chunkStart = appJs.indexOf('function collectRawProductEntries');
+  const chunkEnd = appJs.indexOf('async function exportToGoogleDoc');
+  const chunk = chunkStart >= 0 && chunkEnd > chunkStart ? appJs.slice(chunkStart, chunkEnd) : '';
+  check('Google Doc content-building helpers are found for inspection', chunk.length > 0);
+  check('buildFullGoogleDocContent uses section.title and section.text', chunk.includes('section.title') && chunk.includes('section.text'));
+  check('buildFullGoogleDocContent does not pull in raw metadata JSON dumps', !chunk.includes('metadataJson') && !chunk.includes('JSON.stringify(packageItem.metadata'));
+  check('buildFullGoogleDocContent marks the non-spoken block as team-only, not-read-aloud', chunk.includes('ทีมงานเท่านั้น') && chunk.includes('ไม่ต้องอ่านออกเสียง'));
+  check('Product Talk explicitly avoids fabricating usage/how-to-use text', chunk.includes('No usage/how-to-use text'));
+  try {
+    // eslint-disable-next-line no-eval
+    const factory = (0, eval)(`(function(){ ${chunk}
+      return { buildFullGoogleDocContent, buildProductTalkEntries, buildSetPurposeText, buildSetPriceText, planSetTableCellEdits };
+    })`);
+    gdocFns = factory();
+  } catch (err) {
+    gdocFns = {};
+  }
+  check('Google Doc content-building helpers evaluate to callable functions (no DOM/global leakage)',
+    typeof gdocFns.buildFullGoogleDocContent === 'function' &&
+    typeof gdocFns.buildProductTalkEntries === 'function' &&
+    typeof gdocFns.planSetTableCellEdits === 'function');
 }
+
+if (typeof gdocFns.buildFullGoogleDocContent === 'function') {
+  const fakePackage = (n) => ({
+    metadata: { account: 'SKINOXY TikTok', platform: 'TikTok', brand: 'SKINOXY', assignedPattern: 'C', patternStyle: 'โปร → ความคุ้มค่า → แก้ข้อกังวล → ปิดการขาย', promotionTitle: `สินค้าทดสอบ ${n}` },
+    promotionSummary: [`ชื่อโปร: สินค้าทดสอบ ${n}`, `ราคา: ราคาปกติ ${n}00 บาท`],
+    productTruth: { regular: n * 100, promoPrice: n * 70, finalPrice: n * 70, discount: n * 30 },
+    mainSpokenScript: {
+      section1: { title: 'เปิดโปร', text: `ข้อความ Section 1 ของโปรที่ ${n} แบบเต็ม` },
+      section2: { title: 'ลดความลังเล', text: `ข้อความ Section 2 ของโปรที่ ${n} แบบเต็ม` },
+      section3: { title: 'ปิดการขาย', text: `ข้อความ Section 3 ของโปรที่ ${n} แบบเต็ม` },
+      shortLoop30: `Short loop 30 ของโปรที่ ${n}`,
+      shortLoop90: `Short loop 90 ของโปรที่ ${n}`
+    },
+    qAndA: [{ question: `คำถามของโปรที่ ${n}`, answer: `คำตอบของโปรที่ ${n}` }],
+    policySafeGuide: [`ห้ามพูดคำต้องห้าม-${n === 1 ? 'shared' : n}`],
+    __rawPromo: {
+      product: {
+        id: `product_${n}`,
+        name: `สินค้าทดสอบตัวหลัก ${n}`,
+        variants: [{
+          id: `variant_${n}`,
+          name: 'Test Variant',
+          color: n === 1 ? 'สีชมพู' : 'สีเหลือง',
+          pain_points: [`ปัญหาทดสอบ ${n}`, 'ปัญหาทดสอบร่วม'],
+          benefits: [`ช่วยทดสอบข้อดี ${n}`],
+          ingredients: [`สาร Test-Ingredient-${n}`]
+        }]
+      },
+      products: [],
+      selectedVariants: []
+    }
+  });
+  const bundle = [fakePackage(1), fakePackage(2)];
+  const result = gdocFns.buildFullGoogleDocContent(bundle);
+  check('buildFullGoogleDocContent bundles multiple promotions into one Doc (Promotion 1 AND Promotion 2 both present)',
+    result.fullText.includes('PROMOTION 1:') && result.fullText.includes('PROMOTION 2:'));
+  check('buildFullGoogleDocContent includes each promotion\'s full Section 1/2/3 spoken text',
+    result.fullText.includes('ข้อความ Section 1 ของโปรที่ 1 แบบเต็ม') &&
+    result.fullText.includes('ข้อความ Section 2 ของโปรที่ 2 แบบเต็ม') &&
+    result.fullText.includes('ข้อความ Section 3 ของโปรที่ 1 แบบเต็ม'));
+  check('buildFullGoogleDocContent includes Q&A for every promotion', result.fullText.includes('คำถามของโปรที่ 1') && result.fullText.includes('คำถามของโปรที่ 2'));
+  check('buildFullGoogleDocContent includes the Policy-Safe Word Guide', result.fullText.includes('ห้ามพูดคำต้องห้าม-2'));
+  check('buildFullGoogleDocContent includes Sequence 2 Product Talk with real ingredients/benefits',
+    result.fullText.includes('Sequence 2: MC Read-Aloud Product Talk') &&
+    result.fullText.includes('สาร Test-Ingredient-1 ช่วยทดสอบข้อดี 1'));
+  check('buildFullGoogleDocContent Product Talk never fabricates a usage/how-to-use line not present in the data',
+    !result.fullText.includes('ใช้เช็ด') && !result.fullText.includes('ใช้ฟอก'));
+  check('buildFullGoogleDocContent includes How to Buy and the A4 footer note',
+    result.fullText.includes('HOW TO BUY — MC READ-ALOUD') && result.fullText.includes('จัดรูปแบบสำหรับ A4'));
+  check('buildFullGoogleDocContent title reflects the Pattern and promotion count', result.title.includes('PATTERN C') && result.title.includes('2 โปรโมชั่น'));
+  check('buildFullGoogleDocContent bold ranges stay within fullText bounds',
+    result.boldRanges.every(r => r.start >= 0 && r.end <= result.fullText.length && r.start < r.end));
+  check('buildFullGoogleDocContent bold ranges actually point at the header lines that were marked bold',
+    result.boldRanges.some(r => result.fullText.slice(r.start, r.end).includes('PROMOTION 1:')));
+  check('buildFullGoogleDocContent returns a Set table plan with one row per promotion and a real price/pain-point summary',
+    result.setTable && result.setTable.rows.length === 2 &&
+    result.setTable.rows[0][1].includes('ปัญหาทดสอบ 1') &&
+    /100 → 70 บาท/.test(result.setTable.rows[0][2]) &&
+    /ประหยัด 30 บาท/.test(result.setTable.rows[0][2]));
+  check('buildFullGoogleDocContent setTableInsertOffset points at a real position right after the "Set" heading',
+    result.fullText.slice(0, result.setTableInsertOffset).trimEnd().endsWith('Set'));
+
+  // planSetTableCellEdits: simulate what the Docs API would report back for a
+  // freshly-inserted empty 2-row x 3-col table (header + 1 promotion row).
+  const fakeCellRows = [[10, 20, 30], [42, 55, 68]];
+  const edits = gdocFns.planSetTableCellEdits(fakeCellRows, result.setTable);
+  check('planSetTableCellEdits returns edits sorted by descending startIndex (writes bottom-right first)',
+    edits.every((edit, i) => i === 0 || edits[i - 1].startIndex >= edit.startIndex));
+  check('planSetTableCellEdits marks only header-row edits as bold', edits.filter(e => e.bold).every(e => [10, 20, 30].includes(e.startIndex)));
+  check('planSetTableCellEdits header edits use the real header labels', edits.find(e => e.startIndex === 10)?.text === 'สินค้า / เงื่อนไข');
+}
+
 check('Doc creation uses documents.create then batchUpdate (no plain-text-only fallback that skips formatting request shape)',
   appJs.includes("fetch('https://docs.googleapis.com/v1/documents'") && appJs.includes(':batchUpdate'));
 check('Created Google Doc opens in a new tab', appJs.includes("window.open(docUrl, '_blank')"));
+check('exportToGoogleDoc inserts the Set table as a second pass after reading the Doc back for real cell indices',
+  appJs.includes('insertTable') && appJs.includes('cellStartIndexRows') && appJs.includes('planSetTableCellEdits(cellStartIndexRows, setTable)'));
+check('A failed Set table fill degrades gracefully (Doc still opens with a warning) instead of failing the whole export',
+  appJs.includes('tableWarning'));
 
 console.log(`\n${passed} passed, ${failed} failed`);
 if (failed > 0) process.exitCode = 1;
