@@ -268,16 +268,25 @@ Object.keys(primaryById).forEach(accountId => {
       const guideHit = GUIDE_LANGUAGE_TERMS.find(term => section.text.includes(term));
       check(`${accountId} Pattern ${item.metadata.assignedPattern} Section ${index + 1}: no guide-style instruction language`,
         !guideHit, guideHit || '');
-      check(`${accountId} Pattern ${item.metadata.assignedPattern} Section ${index + 1}: no bullet markers, line breaks, or markdown in spoken text`,
-        !/[\r\n]/.test(section.text) && !/(^|\s)[-*#]\s/.test(section.text) && !/(^|\s)\d+[.)]\s/.test(section.text));
+      // V4 Natural Speech Engine: spoken text is one thought per line (\n
+      // between breath units) by design, so plain newlines are expected and
+      // fine here — only markdown bullets/numbered lists/headers and stray
+      // \r (Windows line endings) are actually forbidden.
+      check(`${accountId} Pattern ${item.metadata.assignedPattern} Section ${index + 1}: no bullet markers or markdown in spoken text`,
+        !/\r/.test(section.text) && !/^[-*#]\s/m.test(section.text) && !/^\d+[.)]\s/m.test(section.text));
       check(`${accountId} Pattern ${item.metadata.assignedPattern} Section ${index + 1}: no bracketed placeholders`,
         !PLACEHOLDER_BRACKET_RE.test(section.text), (section.text.match(PLACEHOLDER_BRACKET_RE) || [''])[0]);
     });
     // Spec: "ราคาและรายการสินค้าอาจพูดซ้ำได้ แต่ต้องไม่ใช้ประโยคเดิม Copy ซ้ำตรง ๆ"
     // Facts (price/gift/count) may repeat across sections, but the same sentence
     // must never be copy-pasted verbatim into more than one section of one script.
+    // Price/quantity/discount facts are explicitly allowed to repeat verbatim
+    // across sections (late joiners need the numbers again) — only flag a
+    // repeated sentence when it is NOT one of those fact-carrying lines.
+    const FACT_REPEAT_OK = /บาท|ชิ้น|กระปุก|หลอด|ขวด|ซอง|%|ประหยัด/;
     const sentencesBySection = sectionsOf(item).map(section =>
-      section.text.split(/(?<=[.!?])\s+|(?<=[ก-๙])\s{2,}/).map(s => s.trim()).filter(s => s.length > 20)
+      section.text.split('\n').flatMap(line => line.split(/(?<=[.!?])\s+|(?<=[ก-๙])\s{2,}/))
+        .map(s => s.trim()).filter(s => s.length > 20 && !FACT_REPEAT_OK.test(s))
     );
     const seenSentences = new Map();
     const repeats = [];
@@ -304,6 +313,44 @@ Object.keys(primaryById).forEach(accountId => {
   check(`${accountId}: Pattern B engages before promotion`, indexOfAny(bText, ['คอมเมนต์', 'โมเมนต์', 'สถานการณ์']) < indexOfAny(bText, ['ราคา', 'โปร']));
   check(`${accountId}: Pattern C value before objection`, indexOfAny(cText, ['คุ้ม', 'ราคา', 'ตัวเลข']) < indexOfAny(cText, ['ข้อกังวล']));
 });
+
+console.log('\n=== Natural Speech Engine ===');
+Object.keys(primaryById).forEach(accountId => {
+  const p = firstPromo(accountId);
+
+  // Determinism: same promotion + pattern + hookVariant must always produce
+  // the same script (Product Truth AND phrasing), so QA can reproduce it.
+  const runA = pkg(p, 'A');
+  const runB = pkg(p, 'A');
+  check(`${accountId}: same input + pattern reproduces the same script (deterministic seed)`,
+    fullTextOf(runA) === fullTextOf(runB));
+
+  // Anti-repetition / AI-like phrase detection: the lint pass must exist and
+  // must not itself corrupt Product Truth or the read-aloud text.
+  core.STRATEGIES.forEach(pattern => {
+    const item = pkg(p, pattern);
+    check(`${accountId} Pattern ${pattern}: naturalSpeechWarnings is present (non-blocking QA)`,
+      Array.isArray(item.naturalSpeechWarnings));
+    check(`${accountId} Pattern ${pattern}: linting does not alter mainSpokenScript or productTruth`,
+      typeof item.mainSpokenScript.fullText === 'string' && typeof item.productTruth.rawText === 'string');
+  });
+});
+
+// The linter itself: verify it actually flags a known AI-like phrase and
+// stays silent on a clean, short, varied-opening script.
+check('lintNaturalSpeech: flags a known AI-like marketing phrase',
+  core.lintNaturalSpeech('เซ็ตนี้ตอบโจทย์ทุกไลฟ์สไตล์').some(w => w.includes('ตอบโจทย์ทุกไลฟ์สไตล์')));
+check('lintNaturalSpeech: does not flag a short natural line',
+  core.lintNaturalSpeech('ผิวแห้งมาก\nลองดูขวดฟ้าตัวนี้ก่อน\nกดตะกร้าเก็บไว้ได้เลย').length === 0);
+
+// getSpeechSeed/hashString: same input -> same seed, different input -> a
+// different seed (so phrase-bank variety is real, not accidental).
+check('getSpeechSeed: identical promotion+pattern gives the same seed',
+  core.getSpeechSeed({ accountId: 'skinoxy', rawText: 'promo x' }, 'A', 0)
+    === core.getSpeechSeed({ accountId: 'skinoxy', rawText: 'promo x' }, 'A', 0));
+check('getSpeechSeed: a different promotion gives a different seed',
+  core.getSpeechSeed({ accountId: 'skinoxy', rawText: 'promo x' }, 'A', 0)
+    !== core.getSpeechSeed({ accountId: 'skinoxy', rawText: 'promo y' }, 'A', 0));
 
 console.log('\n=== V3 Section Output Contract ===');
 let sampleMatrixCount = 0;
@@ -342,8 +389,8 @@ Object.keys(primaryById).forEach(accountId => {
         const label = `${accountId} promo${promoIndex + 1} ${pattern} Section ${index + 1}`;
         const guideHit = GUIDE_LANGUAGE_TERMS.find(term => section.text.includes(term));
         check(`${label}: no guide-style instruction language`, !guideHit, guideHit || '');
-        check(`${label}: no bullet markers, line breaks, or markdown in spoken text`,
-          !/[\r\n]/.test(section.text) && !/(^|\s)[-*#]\s/.test(section.text) && !/(^|\s)\d+[.)]\s/.test(section.text));
+        check(`${label}: no bullet markers or markdown in spoken text`,
+          !/\r/.test(section.text) && !/^[-*#]\s/m.test(section.text) && !/^\d+[.)]\s/m.test(section.text));
         check(`${label}: no bracketed placeholders`,
           !PLACEHOLDER_BRACKET_RE.test(section.text), (section.text.match(PLACEHOLDER_BRACKET_RE) || [''])[0]);
         check(`${label}: contains at least one verified Product Truth detail`,

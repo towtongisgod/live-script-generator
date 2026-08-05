@@ -535,6 +535,103 @@ function joinSentences(lines){
   return lines.filter(Boolean).join(' ');
 }
 
+// ---------------------------------------------------------------------------
+// Natural Speech Engine
+// Sits between Validated Product Truth and the composer output. It never
+// touches facts (price/quantity/gift/ingredient/etc come from Product Truth
+// and are passed through untouched) — it only controls: which phrase-bank
+// variant gets picked (deterministic, seeded), and how the picked lines are
+// joined into MC-readable output (one thought per line, not one paragraph).
+// ---------------------------------------------------------------------------
+
+// Deterministic 32-bit string hash (no crypto, no dependency). Same input
+// string always produces the same number, so the same promotion + pattern
+// always generates the same script, but a different promotion (or a
+// "Generate Again" hookVariant bump) lands on a different phrase-bank index.
+function hashString(str){
+  const s = String(str || '');
+  let h = 0;
+  for (let i = 0; i < s.length; i++) {
+    h = (Math.imul(31, h) + s.charCodeAt(i)) | 0;
+  }
+  return h >>> 0;
+}
+
+// Builds one seed per (promotion, pattern) so phrasing choices are stable for
+// that combination but differ across accounts/patterns/promotions.
+function getSpeechSeed(p, patternKey, extraSalt){
+  const key = [p.accountId || '', patternKey || '', p.rawText || p.promotionTitle || p.mainProductText || '', extraSalt || ''].join('|');
+  return hashString(key);
+}
+
+// Deterministically picks an index into a pool of a given length using the
+// seed plus a named salt (so different phrase slots in the same script don't
+// all land on the same index).
+function seededIndex(seed, salt, poolLength){
+  if (!poolLength || poolLength <= 0) return 0;
+  return hashString(`${seed}:${salt}`) % poolLength;
+}
+
+function seededPick(pool, seed, salt){
+  if (!pool || !pool.length) return '';
+  return pool[seededIndex(seed, salt, pool.length)];
+}
+
+// MC-readable formatting: one thought per line instead of one long paragraph.
+// Each item already represents a single spoken thought (a hook, a price beat,
+// a CTA, ...) coming out of the composer, so this is a straight line-per-item
+// join rather than further sentence splitting.
+function joinSpoken(lines){
+  return lines
+    .map(line => (line === null || line === undefined) ? '' : String(line).trim())
+    .filter(Boolean)
+    .join('\n');
+}
+
+// Phrases that read as marketing copy or AI-written text rather than
+// something an MC would actually say live. Not hard-blocked (some are still
+// useful occasionally) — the linter flags them so they can be phased out.
+const AI_LIKE_PHRASES = [
+  'ตอบโจทย์', 'ครบจบ', 'ยกระดับ', 'เผยผิว', 'บอกลาปัญหา', 'ตัวช่วยที่ดี',
+  'เหมาะอย่างยิ่ง', 'คุ้มค่าอย่างมาก', 'พลาดไม่ได้', 'ไอเทมที่ทุกคนต้องมี',
+  'ประสบการณ์ใหม่', 'ช่วยเสริมความมั่นใจ', 'ตอบโจทย์ทุกไลฟ์สไตล์',
+  'ในส่วนของ', 'สามารถใช้งานได้', 'สำหรับใครที่กำลังมองหา', 'หากลูกค้ามีความกังวลเกี่ยวกับ',
+  'นอกจากนี้ยังช่วย', 'ดังนั้นจึงเหมาะกับ'
+];
+
+// Non-blocking QA pass over a fully-assembled script: flags formal/AI-like
+// phrasing, over-long lines, and repeated line openings, WITHOUT ever
+// touching Product Truth or the text itself. Meant for Producer/Debug mode.
+function lintNaturalSpeech(fullText){
+  const warnings = [];
+  const text = String(fullText || '');
+  const lines = text.split('\n').map(l => l.trim()).filter(Boolean);
+
+  AI_LIKE_PHRASES.forEach(phrase => {
+    if (text.includes(phrase)) warnings.push(`AI-like phrase ที่ควรลด: "${phrase}"`);
+  });
+
+  lines.forEach((line, index) => {
+    if (line.length > 160) {
+      warnings.push(`บรรทัดที่ ${index + 1} ยาวเกินไป (${line.length} ตัวอักษร) ลองตัดเป็นหลายความคิด`);
+    }
+  });
+
+  const openings = lines.map(line => line.slice(0, 8));
+  const openingCounts = new Map();
+  openings.forEach(opening => openingCounts.set(opening, (openingCounts.get(opening) || 0) + 1));
+  openingCounts.forEach((count, opening) => {
+    if (count >= 3) warnings.push(`ขึ้นต้นบรรทัดซ้ำ "${opening}..." (${count} ครั้ง) ลองสลับคำเปิด`);
+  });
+
+  const questionCount = (text.match(/ไหม|หรือเปล่า|ไหมคะ|ไหมครับ|\?/g) || []).length;
+  if (questionCount > lines.length * 0.5 && lines.length > 4) {
+    warnings.push('มีคำถามถี่เกินไปเทียบกับจำนวนบรรทัด ลองลดคำถามลง');
+  }
+
+  return warnings;
+}
+
 function uniqueFilled(items){
   return [...new Set((items || [])
     .flat()
@@ -861,7 +958,7 @@ function buildSkinoxyChoiceSpeech(p){
       const pain = (variant.pain_points || []).slice(0, 2).join(' หรือ ');
       const benefit = (variant.benefits || []).slice(0, 2).join(' และ ');
       const label = [variant.name, variant.color].filter(Boolean).join(' ');
-      return `ถ้าเจอ ${pain || 'ปัญหาผิวที่ระบุในตะกร้า'} ตัวที่ตอบโจทย์คือ ${label}${benefit ? ` ${benefit}` : ''}`;
+      return `ถ้าเจอ ${pain || 'ปัญหาผิวที่ระบุในตะกร้า'} ให้เลือก ${label}${benefit ? ` ${benefit}` : ''}`;
     }).join(' ');
     return `โปรนี้ไม่ได้ล็อกสูตรไว้ เลือกได้ทุกสูตรที่ร่วมรายการเลย ${choices}`;
   }
@@ -1773,7 +1870,10 @@ function getBrandSpecificAngles(p){
       experience: fragrance
         ? `ลองนึกถึงวันที่ใช้กลิ่น ${fragrance.name} เป็นกลิ่นหลัก แล้วแต่งตัวและออกไปทำกิจกรรมที่เข้ากับความรู้สึกของกลิ่นนั้น`
         : 'เลือกกลิ่นที่ตรงกับความรู้สึกของวันและเช็กรายละเอียดในตะกร้า',
-      fit: `เหมาะกับคนที่ชอบกลิ่นนี้และอยากใช้ให้เข้ากับบุคลิกหรือโอกาสสำคัญ โดยดูความคุ้มจาก${language.fitTarget}`
+      fit: `เหมาะกับคนที่ชอบกลิ่นนี้และอยากใช้ให้เข้ากับบุคลิกหรือโอกาสสำคัญ โดยดูความคุ้มจาก${language.fitTarget}`,
+      // Closing-recap paraphrase of `fit` — same idea, different wording, so
+      // Pattern C's Section 3 doesn't copy-paste Section 1's fit sentence.
+      recapFit: 'ถ้ากลิ่นนี้ตรงกับบุคลิกหรือโอกาสที่กำลังมองหาอยู่แล้ว ก็ตัดสินใจจากตรงนี้ได้เลย'
     };
   }
 
@@ -1783,7 +1883,8 @@ function getBrandSpecificAngles(p){
       choice: buildDgmrConcernChoiceSpeech(p),
       product: buildDgmrProductRoles(p),
       experience: 'เหมาะกับวันที่อยากจัดขั้นตอนดูแลเส้นผมและหนังศีรษะให้เป็นระบบ โดยใช้เฉพาะรายการที่อยู่ในเซ็ตนี้',
-      fit: 'เหมาะกับคนที่อยากจัดการดูแลเส้นผมและหนังศีรษะให้ครบขึ้นตามสินค้าที่อยู่ในโปร'
+      fit: 'เหมาะกับคนที่อยากจัดการดูแลเส้นผมและหนังศีรษะให้ครบขึ้นตามสินค้าที่อยู่ในโปร',
+      recapFit: 'ถ้ากำลังหาทางจัดระบบดูแลผมและหนังศีรษะให้ครบอยู่พอดี เซ็ตนี้ตอบตรงนั้นได้'
     };
   }
 
@@ -1792,7 +1893,8 @@ function getBrandSpecificAngles(p){
     choice: buildSkinoxyChoiceSpeech(p),
     product: p.product ? `${p.product.name} เป็นตัวหลักในโปรนี้ ให้เลือกสูตรตามปัญหาผิวที่เจอจริง` : 'ให้ยึดรายละเอียดสินค้าในตะกร้าเป็นหลัก',
     experience: 'เหมาะกับวันที่อยากให้การดูแลผิวกายเป็นขั้นตอนที่ทำต่อเนื่องได้ง่ายขึ้น โดยเลือกจากปัญหาผิวที่เจอจริง',
-    fit: 'เหมาะกับคนที่อยากเลือกผลิตภัณฑ์ดูแลผิวตามปัญหาผิวและใช้ต่อเนื่องเป็นประจำ'
+    fit: 'เหมาะกับคนที่อยากเลือกผลิตภัณฑ์ดูแลผิวตามปัญหาผิวและใช้ต่อเนื่องเป็นประจำ',
+    recapFit: 'ถ้าปัญหาผิวที่เล่ามาตรงกับของตัวเองอยู่แล้ว ตัดสินใจจากตรงนี้ได้เลย'
   };
 }
 
@@ -1808,48 +1910,86 @@ function getPlatformCta(platform, patternKey, p){
     : 'เข้าไปดูสินค้าในตะกร้าแล้วเช็กรายละเอียดได้เลย';
 }
 
-function getPatternLead(patternKey, brandKey, platform, variant){
+function getPatternLead(patternKey, brandKey, platform, variant, seed){
   const pools = {
     A: [
       'ก่อนเลือกซื้อ ลองเช็กปัญหาหลักของตัวเองให้ชัดก่อน',
       'เริ่มจากคำถามง่ายๆ ว่าตอนนี้ต้องการแก้เรื่องไหนมากที่สุด',
-      'อย่าเพิ่งเลือกจากชื่อโปรอย่างเดียว ลองดูว่าตัวนี้ตอบโจทย์อะไรจริง'
+      'เอางี้ อย่าเพิ่งเลือกจากชื่อโปรอย่างเดียว ลองดูก่อนว่าตัวนี้ตรงกับปัญหาจริงไหม',
+      'ฟังตรงนี้ก่อน ถ้ายังไม่รู้จะเลือกอันไหน เริ่มจากปัญหาตัวเองก่อนเลย'
     ],
     B: [
       'ลองนึกภาพสถานการณ์ที่ใช้จริงในชีวิตประจำวันก่อน',
       'ถ้าอยากให้การเลือกสินค้าง่ายขึ้น ลองมองจากโมเมนต์ที่เราเจอบ่อยๆ',
-      'วันนี้ขอเล่าแบบเพื่อนชวนเลือกของที่ใช้ได้จริง'
+      'วันนี้ขอเล่าแบบเพื่อนชวนเลือกของที่ใช้ได้จริง',
+      'เอาจริง เรื่องนี้หลายคนเจอบ่อยแต่ไม่ค่อยพูดถึง'
     ],
     C: [
       'โปรนี้เข้าเรื่องความคุ้มก่อนเลย',
       'ถ้ากำลังเทียบความคุ้มอยู่ ให้ดูตัวเลขของโปรนี้ก่อน',
-      'รอบนี้ดูจากสิ่งที่ได้ ราคา และเหตุผลที่ควรกดดูตอนนี้'
+      'รอบนี้ดูจากสิ่งที่ได้ ราคา และเหตุผลที่ควรกดดูตอนนี้',
+      'บอกก่อน รอบนี้เข้าเรื่องตัวเลขเลยไม่อ้อมค้อม'
     ]
   };
   const base = pools[patternKey] || pools.A;
+  const idx = seed != null ? seededIndex(seed, `lead:${variant || 0}`, base.length) : (variant % base.length);
   const customerTail = platform === 'shopee'
-    ? ' ดูรายละเอียดสินค้า จำนวน และราคาต่อได้เลย เพื่อเทียบกับสิ่งที่กำลังหาอยู่'
-    : ' ลองฟังรายละเอียดต่อแล้วเทียบกับสิ่งที่กำลังหาอยู่ได้เลย';
-  return `${base[variant % base.length]}${customerTail}`;
+    ? 'ดูรายละเอียดสินค้าและจำนวนที่แสดงในหน้านี้ เทียบกับสิ่งที่กำลังหาอยู่ได้เลย'
+    : 'ลองฟังรายละเอียดต่อแล้วเทียบกับสิ่งที่กำลังหาอยู่ได้เลย';
+  return joinSpoken([base[idx], customerTail]);
 }
 
-function getBrandEngagementScene(p){
+function getBrandEngagementScene(p, seed){
   const brandKey = p.brandKey || getBrandKey(p.brandId);
-  if (brandKey === 'kiss') return 'เคยมีไหม วันที่แต่งตัวเสร็จแล้วแต่ยังรู้สึกว่าขาดกลิ่นที่ช่วยเติมบุคลิกให้ภาพรวมลงตัว';
-  if (brandKey === 'dgmr') return 'เคยมีช่วงที่สระผมแล้ว แต่ยังรู้สึกว่าการดูแลเส้นผมกับหนังศีรษะไม่ต่อเนื่องเพราะมีของใช้ไม่ครบขั้นตอนไหม';
-  return 'เคยมีวันที่ตั้งใจดูแลผิวกาย แต่พอของที่ใช้หมดเร็วหรือมีขั้นตอนยุ่งเกินไปก็ทำต่อเนื่องได้ยากไหม';
+  const pools = {
+    kiss: [
+      'เคยมีไหม วันที่แต่งตัวเสร็จแล้วแต่ยังรู้สึกว่าขาดกลิ่นที่ช่วยเติมบุคลิกให้ภาพรวมลงตัว',
+      'ใครเคยเจอเหตุการณ์นี้บ้าง แต่งตัวจบแล้ว แต่ยังรู้สึกว่าขาดอะไรไปนิดหนึ่ง'
+    ],
+    dgmr: [
+      'เคยมีช่วงที่สระผมแล้ว แต่ยังรู้สึกว่าการดูแลเส้นผมกับหนังศีรษะไม่ต่อเนื่องเพราะมีของใช้ไม่ครบขั้นตอนไหม',
+      'ใครเป็นแบบนี้บ้าง สระผมทุกวัน แต่ยังไม่รู้ว่าต้องดูแลหนังศีรษะเพิ่มตรงไหน'
+    ],
+    skinoxy: [
+      'เคยมีวันที่ตั้งใจดูแลผิวกาย แต่พอของที่ใช้หมดเร็วหรือมีขั้นตอนยุ่งเกินไปก็ทำต่อเนื่องได้ยากไหม',
+      'ใครเป็นแบบนี้บ้าง ตั้งใจจะดูแลผิวกาย แต่พอยุ่งขึ้นมาก็เลิกกลางคัน'
+    ]
+  };
+  const pool = pools[brandKey] || pools.skinoxy;
+  return seed != null ? seededPick(pool, seed, 'engagement') : pool[0];
 }
 
-function getChoiceQuestion(p, platform){
+function getChoiceQuestion(p, platform, seed){
   const brandKey = p.brandKey || getBrandKey(p.brandId);
-  if (platform === 'shopee') {
-    if (brandKey === 'kiss') return 'ก่อนกดสั่ง ลองเช็กว่าอยากได้กลิ่นแบบหวาน สดใส หรือโดดเด่น จะช่วยเทียบตัวเลือกในหน้าสินค้าได้ตรงขึ้น';
-    if (brandKey === 'dgmr') return 'ก่อนกดสั่ง ลองระบุว่ากังวลเรื่องเส้นผมหรือหนังศีรษะด้านไหนมากที่สุด จะช่วยเทียบรายละเอียดสินค้าได้ตรงขึ้น';
-    return 'ก่อนกดสั่ง ลองระบุว่าผิวกายด้านไหนที่อยากแก้มากที่สุด จะช่วยเทียบรายละเอียดสินค้าได้ตรงขึ้น';
-  }
-  if (brandKey === 'kiss') return 'ปกติเลือกน้ำหอมจากความหวาน ความสดใส หรือความโดดเด่นของกลิ่น ลองบอกสไตล์ที่ชอบไว้ได้เลย';
-  if (brandKey === 'dgmr') return 'ตอนนี้กังวลเรื่องเส้นผมหรือหนังศีรษะด้านไหนมากที่สุด ลองบอกปัญหาหลักไว้ก่อน จะได้เลือกจากข้อมูลสินค้าได้ตรงขึ้น';
-  return 'ตอนนี้ให้ความสำคัญกับผิวกายด้านไหนมากที่สุด ลองบอกปัญหาหลักไว้ก่อน จะได้เลือกจากข้อมูลสินค้าได้ตรงขึ้น';
+  const pools = {
+    'shopee-kiss': [
+      'ก่อนกดสั่ง ลองเช็กว่าอยากได้กลิ่นแบบหวาน สดใส หรือโดดเด่น จะช่วยเทียบตัวเลือกในหน้าสินค้าได้ตรงขึ้น',
+      'ก่อนกดสั่ง เอางี้ ลองนึกว่าอยากได้กลิ่นแนวไหนก่อน แล้วค่อยดูตัวเลือกในหน้านี้'
+    ],
+    'shopee-dgmr': [
+      'ก่อนกดสั่ง ลองระบุว่ากังวลเรื่องเส้นผมหรือหนังศีรษะด้านไหนมากที่สุด จะช่วยเทียบรายละเอียดสินค้าได้ตรงขึ้น',
+      'ก่อนกดสั่ง บอกก่อนว่ากังวลเรื่องผมหรือหนังศีรษะมากกว่ากัน จะได้ดูให้ตรงจุด'
+    ],
+    'shopee-skinoxy': [
+      'ก่อนกดสั่ง ลองระบุว่าผิวกายด้านไหนที่อยากแก้มากที่สุด จะช่วยเทียบรายละเอียดสินค้าได้ตรงขึ้น',
+      'ก่อนกดสั่ง เช็กก่อนว่าผิวกายเราอยากแก้เรื่องไหนมากสุด'
+    ],
+    kiss: [
+      'ปกติเลือกน้ำหอมจากความหวาน ความสดใส หรือความโดดเด่นของกลิ่น ลองบอกสไตล์ที่ชอบไว้ได้เลย',
+      'พิมพ์มาได้ ปกติชอบกลิ่นแนวหวาน สดใส หรือโดดเด่นกว่า'
+    ],
+    dgmr: [
+      'ตอนนี้กังวลเรื่องเส้นผมหรือหนังศีรษะด้านไหนมากที่สุด ลองบอกปัญหาหลักไว้ก่อน จะได้เลือกจากข้อมูลสินค้าได้ตรงขึ้น',
+      'ก่อนเลือก ดูก่อนว่าเรากังวลเรื่องเส้นผมหรือหนังศีรษะมากกว่ากัน'
+    ],
+    skinoxy: [
+      'ตอนนี้ให้ความสำคัญกับผิวกายด้านไหนมากที่สุด ลองบอกปัญหาหลักไว้ก่อน จะได้เลือกจากข้อมูลสินค้าได้ตรงขึ้น',
+      'ถ้าผิวเป็นแบบนี้ พิมพ์บอกมาได้ เดี๋ยวช่วยเลือกให้ตรงจุด'
+    ]
+  };
+  const key = platform === 'shopee' ? `shopee-${brandKey}` : brandKey;
+  const pool = pools[key] || pools.skinoxy;
+  return seed != null ? seededPick(pool, seed, 'choice') : pool[0];
 }
 
 function getClosingSupportLines(p, platform){
@@ -1863,7 +2003,8 @@ function getClosingSupportLines(p, platform){
       `รายการทั้งหมดใน${language.subject}ถูกเทียบกับราคาปกติไว้ให้แล้วในหน้าสินค้า จึงไม่ต้องคำนวณเอง`,
       'ถ้ากำลังเทียบกับร้านอื่น ให้ใช้ตัวเลขจำนวนและราคาต่อชิ้นในหน้านี้เป็นหลัก',
       `เลือกสูตรหรือรายการที่ตรงกับปัญหาก่อน แล้วค่อยดูว่า${language.subject}ครอบคลุมของที่ต้องการครบไหม`,
-      `ถ้ายังไม่แน่ใจ ลองดูรายการใน${language.subject}อีกรอบเทียบกับของที่ใช้อยู่ตอนนี้`
+      `ถ้ายังไม่แน่ใจ ลองดูรายการใน${language.subject}อีกรอบเทียบกับของที่ใช้อยู่ตอนนี้`,
+      `ทุกอย่างที่ต้องรู้ก่อนตัดสินใจอยู่ในหน้านี้ครบแล้ว ไม่ต้องเปิดหาที่อื่นเพิ่ม`
     ];
   }
   if (platform === 'shopee') {
@@ -1875,7 +2016,8 @@ function getClosingSupportLines(p, platform){
       'ราคาที่แสดงในหน้านี้เป็นราคาล่าสุด จึงใช้เทียบกับที่เคยเห็นในร้านอื่นได้ตรงขึ้น',
       'ถ้าเช็กแล้วตรงกับที่ต้องการ ให้เพิ่มลงตะกร้าไว้ก่อนแล้วค่อยตัดสินใจอีกที',
       `เลือกจากปัญหาที่ต้องการแก้ก่อน แล้วดูว่า${language.subject}ตรงกับสิ่งนั้นหรือไม่`,
-      'ถ้ายังไม่แน่ใจ ลองย้อนดูรายละเอียดในหน้านี้อีกครั้งก่อนตัดสินใจ'
+      'ถ้ายังไม่แน่ใจ ลองย้อนดูรายละเอียดในหน้านี้อีกครั้งก่อนตัดสินใจ',
+      'ข้อมูลทั้งหมดในหน้านี้ครบพอให้ตัดสินใจได้เลย ไม่ต้องเปิดเทียบที่ร้านอื่นเพิ่ม'
     ];
   }
   if (language.isMulti) {
@@ -1886,8 +2028,9 @@ function getClosingSupportLines(p, platform){
       'ถ้ารายการตรงกับสิ่งที่ต้องการ ให้ตรวจยอดและเงื่อนไขในตะกร้าให้ครบก่อนชำระ',
       `${language.demonstrative}ถูกพูดครบตั้งแต่ชื่อ จำนวน ไปจนถึงราคา จึงตัดสินใจจากไลฟ์นี้ได้โดยไม่ต้องเปิดหาที่อื่น`,
       'ถ้ายังตัดสินใจไม่ได้ ลองฟังอีกรอบว่าของในเซ็ตตรงกับสิ่งที่ใช้อยู่ทุกวันไหม',
-      `เลือกจากปัญหาหรือความต้องการหลักก่อน แล้วเช็กว่า${language.subject}ตอบโจทย์นั้นครบไหม`,
-      'ถ้ายังไม่แน่ใจ ลองย้อนฟังของในเซ็ตอีกรอบเทียบกับสิ่งที่ใช้อยู่ทุกวัน'
+      `เลือกจากปัญหาหรือความต้องการหลักก่อน แล้วเช็กว่า${language.subject}ตรงกับสิ่งที่ต้องการครบไหม`,
+      'ถ้ายังไม่แน่ใจ ลองย้อนฟังของในเซ็ตอีกรอบเทียบกับสิ่งที่ใช้อยู่ทุกวัน',
+      'ทุกอย่างที่ต้องรู้ก่อนกดตะกร้าถูกพูดในไลฟ์นี้ครบแล้ว'
     ];
   }
   return [
@@ -1898,7 +2041,8 @@ function getClosingSupportLines(p, platform){
     'ถ้าสินค้าตรงกับสไตล์และโอกาสที่กำลังหา ให้ตรวจยอดและเงื่อนไขในตะกร้าได้ทันที',
     'รายละเอียดของสินค้านี้ถูกพูดครบในไลฟ์นี้แล้ว จึงตัดสินใจได้โดยไม่ต้องเปิดหาข้อมูลที่อื่นเพิ่ม',
     `เลือกจากปัญหาที่ต้องการแก้ก่อน แล้วเช็กว่า${language.subject}ตรงกับสิ่งนั้นหรือไม่`,
-    'ถ้ายังไม่แน่ใจ ลองย้อนฟังรายละเอียดของสินค้านี้อีกครั้งก่อนตัดสินใจ'
+    'ถ้ายังไม่แน่ใจ ลองย้อนฟังรายละเอียดของสินค้านี้อีกครั้งก่อนตัดสินใจ',
+    'ทุกอย่างที่ต้องรู้ก่อนตัดสินใจถูกพูดในไลฟ์นี้ครบแล้ว'
   ];
 }
 
@@ -1978,11 +2122,14 @@ function buildPlatformSections(p, patternKey, context){
   const gift = getGiftSpeech(p);
   const discount = getDiscountSpeech(p);
   const average = getAverageSpeech(p);
-  const engagementScene = getBrandEngagementScene(p);
-  const choiceQuestion = getChoiceQuestion(p, platform);
-  const closingLines = getClosingSupportLines(p, platform);
   const hookVariant = context.hookVariant || 0;
-  const lead = getPatternLead(patternKey, brandKey, platform, hookVariant);
+  // One seed per (promotion, pattern): phrasing choices below are deterministic
+  // for this exact input, but differ across promotions/patterns/hookVariant.
+  const speechSeed = getSpeechSeed(p, patternKey, hookVariant);
+  const engagementScene = getBrandEngagementScene(p, speechSeed);
+  const choiceQuestion = getChoiceQuestion(p, platform, speechSeed);
+  const closingLines = getClosingSupportLines(p, platform);
+  const lead = getPatternLead(patternKey, brandKey, platform, hookVariant, speechSeed);
   const detailLine = getBrandDetailLine(p, brandKey);
   const knowledgeDepth = buildKnowledgeDepthLine(p, brandKey);
   const brandCharacter = getBrandCharacter(p);
@@ -2048,11 +2195,12 @@ function buildPlatformSections(p, patternKey, context){
   const closeSupport6 = closingLines[5] || closingLines[1] || '';
   const closeSupport7 = closingLines[6] || closingLines[2] || '';
   const closeSupport8 = closingLines[7] || closingLines[3] || '';
+  const closeSupport9 = closingLines[8] || closingLines[4] || '';
 
   let s1, s2, s3;
 
   if (patternKey === 'B') {
-    s1 = joinSentences([
+    s1 = joinSpoken([
       engagementScene,
       lead,
       brandPositioningLine,
@@ -2068,7 +2216,7 @@ function buildPlatformSections(p, patternKey, context){
       closeSupport8,
       miniCta1
     ]);
-    s2 = joinSentences([
+    s2 = joinSpoken([
       lateJoinCatchup,
       angles.experience,
       angles.product,
@@ -2082,7 +2230,7 @@ function buildPlatformSections(p, patternKey, context){
       closeSupport7,
       miniCta2
     ]);
-    s3 = joinSentences([
+    s3 = joinSpoken([
       lateJoinCatchupClose,
       angles.fit,
       price ? `เรื่องราคา ${price}` : 'ราคาให้ดูตามรายละเอียดในตะกร้า',
@@ -2098,7 +2246,7 @@ function buildPlatformSections(p, patternKey, context){
       fullCta
     ]);
   } else if (patternKey === 'C') {
-    s1 = joinSentences([
+    s1 = joinSpoken([
       lead,
       platform === 'shopee'
         ? `หน้านี้ได้ ${items}${p.gift ? ` พร้อม ${formatGiftLine(p)}` : ''}`
@@ -2115,7 +2263,7 @@ function buildPlatformSections(p, patternKey, context){
       closeSupport2,
       miniCta1
     ]);
-    s2 = joinSentences([
+    s2 = joinSpoken([
       lateJoinCatchup,
       angles.product,
       angles.choice,
@@ -2128,24 +2276,24 @@ function buildPlatformSections(p, patternKey, context){
       decideReassure,
       miniCta2
     ]);
-    s3 = joinSentences([
+    s3 = joinSpoken([
       lateJoinCatchupClose,
       platform === 'shopee' ? `ทวนอีกรอบว่าหน้านี้ได้ ${items}` : `ทวนอีกรอบว่าโปรนี้ได้ ${items}`,
       price ? (platform === 'shopee' ? `ราคาสุทธิที่ต้องจ่ายคือ ${price}` : `ราคาสรุปคือ ${price}`) : 'ราคาให้ตรวจตามตะกร้าอีกครั้ง',
       giftLine,
       average,
       discount,
-      angles.fit,
-      angles.experience,
+      angles.recapFit,
       closeSupport5,
       closeSupport6,
-      decideReassure,
+      closeSupport8,
+      closeSupport9,
       whyNowLine,
       checkBasketReassure,
       fullCta
     ]);
   } else {
-    s1 = joinSentences([
+    s1 = joinSpoken([
       lead,
       angles.problem,
       brandPositioningLine,
@@ -2159,7 +2307,7 @@ function buildPlatformSections(p, patternKey, context){
       closeSupport2,
       miniCta1
     ]);
-    s2 = joinSentences([
+    s2 = joinSpoken([
       lateJoinCatchup,
       angles.product,
       angles.choice,
@@ -2173,7 +2321,7 @@ function buildPlatformSections(p, patternKey, context){
       closeSupport7,
       miniCta2
     ]);
-    s3 = joinSentences([
+    s3 = joinSpoken([
       lateJoinCatchupClose,
       angles.fit,
       price ? (platform === 'shopee' ? `ราคาที่แสดงในหน้าสินค้าคือ ${price}` : `สำหรับราคา ${price}`) : 'ราคาให้ดูตามรายละเอียดในตะกร้า',
@@ -2631,6 +2779,10 @@ function createScriptPackage(p, pattern = 'A', context = {}){
     'ตรวจชื่อสินค้า จำนวน ราคา ของแถม และตัวเลือกจากตะกร้าก่อนเริ่มขาย'
   ];
   const validationNotes = buildValidationNotes(p, assignment);
+  // Non-blocking Natural Speech QA pass (Producer/Debug mode only). Never
+  // changes mainSpokenScript itself — Product Truth and the read-aloud text
+  // are untouched either way, this only surfaces phrasing to clean up later.
+  const naturalSpeechWarnings = generationBlocked ? [] : lintNaturalSpeech(mainSpokenScript.fullText);
   const scriptPackage = {
     metadata,
     productTruth: truth,
@@ -2641,6 +2793,7 @@ function createScriptPackage(p, pattern = 'A', context = {}){
     producerPushLine,
     producerNotes,
     validationNotes,
+    naturalSpeechWarnings,
     generationBlocked,
     pattern: patternMeta,
     assignment,
@@ -2712,6 +2865,7 @@ if (typeof module !== 'undefined' && module.exports) {
     LSG_ACCOUNTS, SELLING_PATTERNS, PLATFORM_PERSONAS, BRAND_PERSONAS, AUDIENCE_PROFILES,
     STRATEGIES, STRATEGY_META, STRATEGY_ALIASES, normalizePatternKey, resolveAssignedPattern,
     getCommunicationProfile, createScriptPackage, createScript, enforceLanguageRules, getBrandKey,
-    getSectionTitles, buildQAndA, buildPolicySafeGuide, speakingTimeWarning
+    getSectionTitles, buildQAndA, buildPolicySafeGuide, speakingTimeWarning,
+    hashString, getSpeechSeed, seededIndex, seededPick, joinSpoken, lintNaturalSpeech, AI_LIKE_PHRASES
   };
 }
