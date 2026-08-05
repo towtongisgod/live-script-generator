@@ -273,6 +273,24 @@ Object.keys(primaryById).forEach(accountId => {
       check(`${accountId} Pattern ${item.metadata.assignedPattern} Section ${index + 1}: no bracketed placeholders`,
         !PLACEHOLDER_BRACKET_RE.test(section.text), (section.text.match(PLACEHOLDER_BRACKET_RE) || [''])[0]);
     });
+    // Spec: "ราคาและรายการสินค้าอาจพูดซ้ำได้ แต่ต้องไม่ใช้ประโยคเดิม Copy ซ้ำตรง ๆ"
+    // Facts (price/gift/count) may repeat across sections, but the same sentence
+    // must never be copy-pasted verbatim into more than one section of one script.
+    const sentencesBySection = sectionsOf(item).map(section =>
+      section.text.split(/(?<=[.!?])\s+|(?<=[ก-๙])\s{2,}/).map(s => s.trim()).filter(s => s.length > 20)
+    );
+    const seenSentences = new Map();
+    const repeats = [];
+    sentencesBySection.forEach((sentences, sectionIndex) => {
+      sentences.forEach(sentence => {
+        if (seenSentences.has(sentence) && seenSentences.get(sentence) !== sectionIndex) {
+          repeats.push(sentence.slice(0, 40));
+        }
+        seenSentences.set(sentence, sectionIndex);
+      });
+    });
+    check(`${accountId} Pattern ${item.metadata.assignedPattern}: no sentence copy-pasted verbatim across sections`,
+      repeats.length === 0, repeats.join(' | '));
   });
   check(`${accountId}: A/B/C full scripts differ`, fullTextOf(packages[0]) !== fullTextOf(packages[1]) && fullTextOf(packages[1]) !== fullTextOf(packages[2]));
   check(`${accountId}: Product Truth same A vs B`, sameFacts(packages[0], packages[1]), diffFacts(packages[0], packages[1]).join(', '));

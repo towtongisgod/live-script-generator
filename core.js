@@ -1859,7 +1859,11 @@ function getClosingSupportLines(p, platform){
       `ในหน้าสินค้าสามารถตรวจ${language.collection}ควบคู่กับราคาโปรได้ทันที จึงเห็นว่ายอดที่จ่ายครอบคลุมอะไรบ้าง`,
       `สินค้าหลักรวม ${formatMoney(p.itemCount)} ชิ้น และราคาต่อชิ้นช่วยให้เปรียบเทียบกับชุดอื่นในงบเดียวกันได้ง่าย`,
       `ข้อมูลจำนวน ส่วนลด และยอดรวมของ${language.subject}อยู่ครบ จึงลดคำถามสำคัญก่อนเพิ่มลงตะกร้า`,
-      'เมื่อรายละเอียดตรงตามต้องการ ให้ตรวจยอดชำระล่าสุดและเงื่อนไขจากหน้าตะกร้าได้ทันที'
+      'เมื่อรายละเอียดตรงตามต้องการ ให้ตรวจยอดชำระล่าสุดและเงื่อนไขจากหน้าตะกร้าได้ทันที',
+      `รายการทั้งหมดใน${language.subject}ถูกเทียบกับราคาปกติไว้ให้แล้วในหน้าสินค้า จึงไม่ต้องคำนวณเอง`,
+      'ถ้ากำลังเทียบกับร้านอื่น ให้ใช้ตัวเลขจำนวนและราคาต่อชิ้นในหน้านี้เป็นหลัก',
+      `เลือกสูตรหรือรายการที่ตรงกับปัญหาก่อน แล้วค่อยดูว่า${language.subject}ครอบคลุมของที่ต้องการครบไหม`,
+      `ถ้ายังไม่แน่ใจ ลองดูรายการใน${language.subject}อีกรอบเทียบกับของที่ใช้อยู่ตอนนี้`
     ];
   }
   if (platform === 'shopee') {
@@ -1867,7 +1871,11 @@ function getClosingSupportLines(p, platform){
       `หน้าสินค้าระบุชื่อและราคาโปรของ${language.subject}ชัด จึงตรวจความคุ้มได้โดยไม่ต้องเทียบจำนวนหลายรายการ`,
       'การซื้อสินค้าเดี่ยวช่วยให้เช็กยอดที่ต้องจ่ายและรายละเอียดสำคัญก่อนชำระได้รวดเร็ว',
       'ราคาของสินค้านี้แสดงตรงกับข้อมูลโปร จึงใช้ตัวเลขจริงตัดสินใจได้ทันที',
-      'ถ้ารายละเอียดตรงกับที่กำลังหา ให้ตรวจยอดและเงื่อนไขในตะกร้าได้ทันที'
+      'ถ้ารายละเอียดตรงกับที่กำลังหา ให้ตรวจยอดและเงื่อนไขในตะกร้าได้ทันที',
+      'ราคาที่แสดงในหน้านี้เป็นราคาล่าสุด จึงใช้เทียบกับที่เคยเห็นในร้านอื่นได้ตรงขึ้น',
+      'ถ้าเช็กแล้วตรงกับที่ต้องการ ให้เพิ่มลงตะกร้าไว้ก่อนแล้วค่อยตัดสินใจอีกที',
+      `เลือกจากปัญหาที่ต้องการแก้ก่อน แล้วดูว่า${language.subject}ตรงกับสิ่งนั้นหรือไม่`,
+      'ถ้ายังไม่แน่ใจ ลองย้อนดูรายละเอียดในหน้านี้อีกครั้งก่อนตัดสินใจ'
     ];
   }
   if (language.isMulti) {
@@ -1875,7 +1883,11 @@ function getClosingSupportLines(p, platform){
       `ความคุ้มของ${language.subject}อยู่ที่ได้${language.collection}ตามที่ระบุในโปร โดยยอดรวมถูกสรุปไว้ให้เทียบกับราคาปกติได้ทันที`,
       `จำนวนสินค้าหลักรวม ${formatMoney(p.itemCount)} ชิ้น ทำให้เห็นชัดว่าราคาที่จ่ายครอบคลุมของในเซ็ตกี่รายการ`,
       `เมื่อดูทั้งส่วนลด ราคาเฉลี่ย และของที่ได้รับ ${language.subject}มีข้อมูลพอให้ลดความลังเลและตัดสินใจจากตัวเลขจริง`,
-      'ถ้ารายการตรงกับสิ่งที่ต้องการ ให้ตรวจยอดและเงื่อนไขในตะกร้าให้ครบก่อนชำระ'
+      'ถ้ารายการตรงกับสิ่งที่ต้องการ ให้ตรวจยอดและเงื่อนไขในตะกร้าให้ครบก่อนชำระ',
+      `${language.demonstrative}ถูกพูดครบตั้งแต่ชื่อ จำนวน ไปจนถึงราคา จึงตัดสินใจจากไลฟ์นี้ได้โดยไม่ต้องเปิดหาที่อื่น`,
+      'ถ้ายังตัดสินใจไม่ได้ ลองฟังอีกรอบว่าของในเซ็ตตรงกับสิ่งที่ใช้อยู่ทุกวันไหม',
+      `เลือกจากปัญหาหรือความต้องการหลักก่อน แล้วเช็กว่า${language.subject}ตอบโจทย์นั้นครบไหม`,
+      'ถ้ายังไม่แน่ใจ ลองย้อนฟังของในเซ็ตอีกรอบเทียบกับสิ่งที่ใช้อยู่ทุกวัน'
     ];
   }
   return [
@@ -1883,7 +1895,10 @@ function getClosingSupportLines(p, platform){
     `รายละเอียดที่ต้องตัดสินใจมีชัดเจนทั้งชื่อสินค้า ราคา และลักษณะการใช้งานของ${language.subject}`,
     'ราคาของสินค้านี้ชัดเจน จึงตัดสินใจจากตัวเลขจริงได้เร็ว',
     `เมื่อสินค้าเป็นรายการเดียว การตรวจชื่อและราคาก่อนชำระทำได้เร็ว และช่วยลดความลังเลก่อนกดรับโปร`,
-    'ถ้าสินค้าตรงกับสไตล์และโอกาสที่กำลังหา ให้ตรวจยอดและเงื่อนไขในตะกร้าได้ทันที'
+    'ถ้าสินค้าตรงกับสไตล์และโอกาสที่กำลังหา ให้ตรวจยอดและเงื่อนไขในตะกร้าได้ทันที',
+    'รายละเอียดของสินค้านี้ถูกพูดครบในไลฟ์นี้แล้ว จึงตัดสินใจได้โดยไม่ต้องเปิดหาข้อมูลที่อื่นเพิ่ม',
+    `เลือกจากปัญหาที่ต้องการแก้ก่อน แล้วเช็กว่า${language.subject}ตรงกับสิ่งนั้นหรือไม่`,
+    'ถ้ายังไม่แน่ใจ ลองย้อนฟังรายละเอียดของสินค้านี้อีกครั้งก่อนตัดสินใจ'
   ];
 }
 
@@ -1981,12 +1996,37 @@ function buildPlatformSections(p, patternKey, context){
   const checkBasketReassure = platform === 'shopee'
     ? 'ก่อนชำระเงิน เช็กชื่อสินค้า ตัวเลือก และราคาในหน้าตะกร้าให้ตรงกับที่อ่านมาทุกครั้ง'
     : 'ก่อนกดยืนยัน เช็กชื่อสินค้า จำนวน และราคาในตะกร้าให้ตรงกับที่คุยกันในไลฟ์นี้';
-  const lateJoinCatchup = platform === 'shopee'
-    ? `สำหรับคนที่เพิ่งเปิดมาดู หน้านี้คือ ${items}${price ? ` ${price}` : ''}`
-    : `ถ้าเพิ่งเข้ามาดู สรุปสั้นๆ ให้ฟังอีกทีคือโปรนี้คือ ${items}${price ? ` ${price}` : ''}`;
-  const lateJoinCatchupClose = platform === 'shopee'
-    ? `ทวนอีกครั้งสำหรับคนที่เพิ่งเปิดมาดู สินค้านี้คือ ${items}${p.gift ? ` พร้อม ${formatGiftLine(p)}` : ''}`
-    : `ย้อนสรุปอีกครั้งสำหรับใครที่เพิ่งตามมา โปรนี้คือ ${items}${p.gift ? ` พร้อม ${formatGiftLine(p)}` : ''}`;
+  // Vary the late-joiner catch-up opener by pattern so the same promotion's
+  // A/B/C scripts don't recap with the identical sentence.
+  const catchupOpeners = {
+    shopee: {
+      A: 'สำหรับคนที่เพิ่งเปิดมาดู หน้านี้คือ',
+      B: 'ใครเพิ่งกดเข้ามาดู ขอเล่าซ้ำแบบไวๆ ว่าหน้านี้คือ',
+      C: 'สำหรับใครที่เพิ่งตามมา หน้าที่กำลังพูดถึงคือ'
+    },
+    tiktok: {
+      A: 'ถ้าเพิ่งเข้ามาดู สรุปสั้นๆ ให้ฟังอีกทีคือโปรนี้คือ',
+      B: 'ใครเพิ่งกดเข้ามา ขอเล่าซ้ำแบบไวๆ ว่าของที่คุยกันวันนี้คือ',
+      C: 'สำหรับคนที่เพิ่งตามมา ทวนไวๆ ว่าโปรที่กำลังพูดถึงคือ'
+    }
+  };
+  const catchupClosers = {
+    shopee: {
+      A: 'ทวนอีกครั้งสำหรับคนที่เพิ่งเปิดมาดู สินค้านี้คือ',
+      B: 'ย้อนสรุปอีกทีสำหรับคนที่เพิ่งตามมา สินค้านี้คือ',
+      C: 'สรุปปิดท้ายสำหรับใครที่เพิ่งเข้ามา สินค้านี้คือ'
+    },
+    tiktok: {
+      A: 'ย้อนสรุปอีกครั้งสำหรับใครที่เพิ่งตามมา โปรนี้คือ',
+      B: 'เก็บตกอีกทีสำหรับใครที่เพิ่งเข้ามา โปรนี้คือ',
+      C: 'ปิดท้ายทวนอีกรอบสำหรับคนที่เพิ่งตามมา โปรนี้คือ'
+    }
+  };
+  const platformKey = platform === 'shopee' ? 'shopee' : 'tiktok';
+  const openerLead = (catchupOpeners[platformKey][patternKey] || catchupOpeners[platformKey].A);
+  const closerLead = (catchupClosers[platformKey][patternKey] || catchupClosers[platformKey].A);
+  const lateJoinCatchup = `${openerLead} ${items}${price ? ` ${price}` : ''}`;
+  const lateJoinCatchupClose = `${closerLead} ${items}${p.gift ? ` พร้อม ${formatGiftLine(p)}` : ''}`;
   const compareSeparate = (p.regular && p.promoPrice && p.discount)
     ? (platform === 'shopee'
       ? 'ถ้าเทียบกับการซื้อทีละชิ้นในราคาปกติ ยอดรวมจะสูงกว่านี้ เพราะราคาโปรนี้รวมส่วนลดไว้ในหน้าเดียวแล้ว'
@@ -1998,10 +2038,16 @@ function buildPlatformSections(p, patternKey, context){
   const brandPositioningLine = brandCharacter.positioning
     ? `แนวทางของแบรนด์ ${p.brandName || 'นี้'} คือเน้นเรื่อง ${brandCharacter.positioning}`
     : '';
+  // Non-overlapping slices: each section gets its own support lines so the
+  // same sentence never repeats verbatim across Section 1/2/3 of one script.
   const closeSupport1 = closingLines[0] || '';
   const closeSupport2 = closingLines[1] || '';
-  const closeSupport3 = closingLines[2] || closingLines[closingLines.length - 1] || '';
-  const closeSupport4 = closingLines[3] || closingLines[closingLines.length - 1] || '';
+  const closeSupport3 = closingLines[2] || '';
+  const closeSupport4 = closingLines[3] || '';
+  const closeSupport5 = closingLines[4] || closingLines[0] || '';
+  const closeSupport6 = closingLines[5] || closingLines[1] || '';
+  const closeSupport7 = closingLines[6] || closingLines[2] || '';
+  const closeSupport8 = closingLines[7] || closingLines[3] || '';
 
   let s1, s2, s3;
 
@@ -2019,7 +2065,7 @@ function buildPlatformSections(p, patternKey, context){
       choiceQuestion,
       closeSupport1,
       closeSupport2,
-      closeSupport3,
+      closeSupport8,
       miniCta1
     ]);
     s2 = joinSentences([
@@ -2031,10 +2077,9 @@ function buildPlatformSections(p, patternKey, context){
       knowledgeDepth,
       average,
       discount,
-      closeSupport1,
-      closeSupport2,
       closeSupport3,
       closeSupport4,
+      closeSupport7,
       miniCta2
     ]);
     s3 = joinSentences([
@@ -2045,8 +2090,8 @@ function buildPlatformSections(p, patternKey, context){
       average,
       giftLine,
       compareSeparate,
-      closeSupport3,
-      closeSupport4,
+      closeSupport5,
+      closeSupport6,
       decideReassure,
       whyNowLine,
       checkBasketReassure,
@@ -2077,9 +2122,9 @@ function buildPlatformSections(p, patternKey, context){
       knowledgeDepth,
       detailLine,
       average,
-      closeSupport1,
-      closeSupport2,
       closeSupport3,
+      closeSupport4,
+      closeSupport7,
       decideReassure,
       miniCta2
     ]);
@@ -2092,7 +2137,8 @@ function buildPlatformSections(p, patternKey, context){
       discount,
       angles.fit,
       angles.experience,
-      closeSupport4,
+      closeSupport5,
+      closeSupport6,
       decideReassure,
       whyNowLine,
       checkBasketReassure,
@@ -2111,7 +2157,6 @@ function buildPlatformSections(p, patternKey, context){
       average,
       closeSupport1,
       closeSupport2,
-      closeSupport3,
       miniCta1
     ]);
     s2 = joinSentences([
@@ -2123,9 +2168,9 @@ function buildPlatformSections(p, patternKey, context){
       knowledgeDepth,
       average,
       discount,
-      closeSupport1,
-      closeSupport2,
       closeSupport3,
+      closeSupport4,
+      closeSupport7,
       miniCta2
     ]);
     s3 = joinSentences([
@@ -2136,8 +2181,8 @@ function buildPlatformSections(p, patternKey, context){
       average,
       giftLine,
       compareSeparate,
-      closeSupport3,
-      closeSupport4,
+      closeSupport5,
+      closeSupport6,
       decideReassure,
       whyNowLine,
       checkBasketReassure,
