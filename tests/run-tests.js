@@ -868,12 +868,14 @@ check('Code.gs implements doPost(e)', appsScriptCode.includes('function doPost(e
 }
 check('Code.gs validates the incoming payload before doing anything with Drive/Docs',
   appsScriptCode.includes('function validatePayload_(payload)') && appsScriptCode.indexOf('validatePayload_(payload)') < appsScriptCode.indexOf('createExportDocument_(payload)'));
-check('Code.gs copies the template rather than editing it (makeCopy, never DriveApp.getFileById(config.templateId).setContent or similar)',
-  appsScriptCode.includes('templateFile.makeCopy') && !/getFileById\(config\.templateId\)\.(setContent|setText)/.test(appsScriptCode));
+check('Code.gs creates a brand-new Doc per export (DocumentApp.create) rather than editing any pre-existing file',
+  appsScriptCode.includes('DocumentApp.create(payload.documentTitle)'));
+check('Code.gs moves the new Doc into the configured Output Folder (not left in My Drive root)',
+  appsScriptCode.includes('outputFolder.addFile(file)') && appsScriptCode.includes('DriveApp.getRootFolder().removeFile(file)'));
 check('Code.gs uses LockService to serialize concurrent create requests', appsScriptCode.includes('LockService.getScriptLock()'));
 check('Code.gs uses CacheService for the idempotency window (double-click / retry guard)',
   appsScriptCode.includes('CacheService.getScriptCache()') && appsScriptCode.includes('IDEMPOTENCY_TTL_SECONDS'));
-check('Code.gs reads Template ID / Output Folder ID from Script Properties, never hardcoded', appsScriptCode.includes("getProperty('GOOGLE_DOCS_TEMPLATE_ID')") && appsScriptCode.includes("getProperty('GOOGLE_DRIVE_OUTPUT_FOLDER_ID')"));
+check('Code.gs reads Output Folder ID from Script Properties, never hardcoded', appsScriptCode.includes("getProperty('GOOGLE_DRIVE_OUTPUT_FOLDER_ID')"));
 check('Code.gs never returns a stack trace to the caller', !/jsonResponse_\([^)]*stack/.test(appsScriptCode));
 check('Code.gs has a centralized Document Theme Config (not colors scattered across functions)', appsScriptCode.includes('const DOCUMENT_THEMES = {') && appsScriptCode.includes('SKINOXY:') && appsScriptCode.includes('KISS:') && appsScriptCode.includes('DGMR:'));
 check('Code.gs skips empty sections/fields instead of rendering placeholders', appsScriptCode.includes('if (!section || !section.spokenScript) return;'));

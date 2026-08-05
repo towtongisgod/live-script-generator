@@ -5,29 +5,34 @@
  * Google Docs/Drive. The frontend never holds an OAuth token or any
  * Drive-writing credential — it only POSTs a Structured Export Payload
  * (plain JSON, see core.js `buildExportPayload`) to this Web App, which
- * runs under a Google account that already owns/has access to the
- * Template Doc and Output Folder.
+ * runs under a Google account that already has write access to the
+ * Output Folder.
  *
- * See google-apps-script/README.md for deployment instructions,
- * Execute-As trade-offs, and how to configure Script Properties.
+ * There is no separate "Master Template" Google Doc to create or edit —
+ * every export creates a brand-new Google Doc from scratch and writes the
+ * full layout (Header / Title / Subtitle / Account Summary / per-Promotion
+ * blocks / Policy Guide) in code below, styled per DOCUMENT_THEMES. This
+ * mirrors how the existing OAuth-based export (app.js exportToGoogleDoc)
+ * already works — no template file to keep in sync, one less manual setup
+ * step, one place (this file) to change the layout.
+ *
+ * See google-apps-script/README.md for deployment instructions and
+ * Execute-As trade-offs.
  * ---------------------------------------------------------------------
  */
 
 // ---------------------------------------------------------------------
-// Config — Template ID / Output Folder ID are PUBLIC configuration (just
-// Drive file/folder IDs, not secrets) and are read from Script Properties
-// so they can be changed without editing/redeploying code.
+// Config — Output Folder ID is PUBLIC configuration (just a Drive folder
+// ID, not a secret) and is read from Script Properties so it can be
+// changed without editing/redeploying code.
 // Project Settings -> Script Properties -> add:
-//   GOOGLE_DOCS_TEMPLATE_ID
 //   GOOGLE_DRIVE_OUTPUT_FOLDER_ID
 // ---------------------------------------------------------------------
 function getConfig_() {
   const props = PropertiesService.getScriptProperties();
-  const templateId = props.getProperty('GOOGLE_DOCS_TEMPLATE_ID');
   const outputFolderId = props.getProperty('GOOGLE_DRIVE_OUTPUT_FOLDER_ID');
-  if (!templateId) throw new ExportError_('CONFIG_MISSING_TEMPLATE_ID', 'GOOGLE_DOCS_TEMPLATE_ID is not set in Script Properties.');
   if (!outputFolderId) throw new ExportError_('CONFIG_MISSING_OUTPUT_FOLDER_ID', 'GOOGLE_DRIVE_OUTPUT_FOLDER_ID is not set in Script Properties.');
-  return { templateId, outputFolderId };
+  return { outputFolderId };
 }
 
 // Idempotency window: a repeated request with the same key inside this
@@ -200,31 +205,34 @@ function validatePayload_(payload) {
 }
 
 // ---------------------------------------------------------------------
-// Document creation — copies the Master Template (never edits it directly),
-// moves the copy into the configured Output Folder, then populates it.
+// Document creation — builds a brand-new Google Doc from scratch (no
+// Master Template file involved) and moves it into the configured Output
+// Folder. Every export is a fresh document; nothing is ever "edited" other
+// than the file this function itself just created.
 // ---------------------------------------------------------------------
 function createExportDocument_(payload) {
   const config = getConfig_();
-  const templateFile = DriveApp.getFileById(config.templateId);
-  const outputFolder = DriveApp.getFolderById(config.outputFolderId);
 
-  const newFile = templateFile.makeCopy(payload.documentTitle, outputFolder);
-  const documentId = newFile.getId();
+  const doc = DocumentApp.create(payload.documentTitle);
+  const documentId = doc.getId();
 
   try {
-    const doc = DocumentApp.openById(documentId);
-    populateDocument_(doc, payload);
+    buildDocumentContent_(doc, payload);
     doc.saveAndClose();
-  } catch (populateErr) {
-    // If population fails partway, don't leave a half-written doc's name
-    // lying about silently — the file still exists (visible in the output
-    // folder) but we surface the failure so the user knows to check it.
-    Logger.log('Document population failed for %s: %s', documentId, populateErr && populateErr.stack);
-    throw new ExportError_('DOCUMENT_POPULATION_FAILED', 'สร้างเอกสารสำเร็จ แต่ใส่ข้อมูลไม่ครบ กรุณาตรวจสอบเอกสารในโฟลเดอร์ Output');
+
+    // New documents are created in the executing account's My Drive root by
+    // DocumentApp.create — move it into the configured Output Folder so it
+    // inherits that folder's sharing settings instead of staying private to
+    // just the creating account.
+    const file = DriveApp.getFileById(documentId);
+    const outputFolder = DriveApp.getFolderById(config.outputFolderId);
+    outputFolder.addFile(file);
+    DriveApp.getRootFolder().removeFile(file);
+  } catch (buildErr) {
+    Logger.log('Document build failed for %s: %s', documentId, buildErr && buildErr.stack);
+    throw new ExportError_('DOCUMENT_BUILD_FAILED', 'สร้างเอกสารไม่สำเร็จ กรุณาลองใหม่อีกครั้ง');
   }
 
-  // New file inherits the Output Folder's sharing settings — this script
-  // never changes permissions to public and never shares individually.
   return {
     documentId: documentId,
     documentUrl: 'https://docs.google.com/document/d/' + documentId + '/edit',
@@ -234,92 +242,61 @@ function createExportDocument_(payload) {
 }
 
 /**
- * Populates the copied template in place.
- *
- * Convention this expects from the Master Template doc:
- *  - A paragraph containing the literal marker text `{{PROMOTION_BLOCKS}}`
- *    marking where dynamic per-promotion content is inserted.
- *  - Placeholder tokens `{{BRAND}}`, `{{PLATFORM}}`, `{{PATTERN}}`,
- *    `{{PATTERN_NAME}}`, `{{PATTERN_STYLE}}`, `{{LIVE_DATE}}`, `{{START_TIME}}`
- *    used in the Header/Title/Subtitle/Account Summary area.
- *  - A paragraph containing `{{POLICY_GUIDE}}` where the Policy-Safe Word
- *    Guide (team-only, not read aloud) is inserted.
- * See README.md "How to create a Master Template" for the exact layout.
+ * Writes the full document layout from the payload: Header, Main Title,
+ * Subtitle, Account Summary table, one Dynamic Block per Promotion, and
+ * the team-only Policy-Safe Word Guide. Any field that is empty/missing on
+ * the payload is skipped entirely — never rendered as an empty heading or
+ * placeholder text.
  */
-function populateDocument_(doc, payload) {
-  const body = doc.getBody();
+function buildDocumentContent_(doc, payload) {
   const theme = getThemeForBrand_(payload.account.brand);
+  const body = doc.getBody();
+  body.setMarginTop(56).setMarginBottom(56).setMarginLeft(56).setMarginRight(56); // ~A4-ish, close to the reference layout
+  doc.addHeader().appendParagraph(payload.account.brand + ' | ' + payload.account.platform + ' LIVE SCRIPT');
 
-  replaceTokens_(body, {
-    '{{BRAND}}': payload.account.brand,
-    '{{PLATFORM}}': payload.account.platform,
-    '{{PATTERN}}': payload.account.pattern,
-    '{{PATTERN_NAME}}': payload.account.patternName || '',
-    '{{PATTERN_STYLE}}': payload.account.patternStyle || '',
-    '{{LIVE_DATE}}': payload.account.liveDate || '—',
-    '{{START_TIME}}': payload.account.startTime || '—'
+  let at = 0;
+  const title = body.insertParagraph(at, payload.account.brand + ' ' + payload.account.platform + ' LIVE SCRIPT — PATTERN ' + payload.account.pattern);
+  title.setHeading(DocumentApp.ParagraphHeading.TITLE);
+  title.editAsText().setForegroundColor(theme.headingColor);
+  at += 1;
+
+  if (payload.account.patternName || payload.account.patternStyle) {
+    const subtitle = body.insertParagraph(at, [payload.account.patternName, payload.account.patternStyle].filter(Boolean).join(' — '));
+    subtitle.setHeading(DocumentApp.ParagraphHeading.SUBTITLE);
+    at += 1;
+  }
+
+  at = insertAccountSummaryTable_(body, at, payload);
+  at += insertBlankParagraph_(body, at);
+
+  payload.promotions.forEach(function (promo, index) {
+    at = insertPromotionBlock_(body, at, promo, index + 1, theme);
   });
 
-  insertAtMarker_(body, '{{PROMOTION_BLOCKS}}', function (anchorIndex) {
-    let insertAt = anchorIndex;
-    payload.promotions.forEach(function (promo, index) {
-      insertAt = insertPromotionBlock_(body, insertAt, promo, index + 1, theme);
+  if (payload.policyGuide && payload.policyGuide.length) {
+    const policyHeading = body.insertParagraph(at, 'POLICY-SAFE WORD GUIDE — ทีมงานเท่านั้น ไม่ต้องอ่านออกเสียง');
+    policyHeading.setHeading(DocumentApp.ParagraphHeading.HEADING2);
+    at += 1;
+    payload.policyGuide.forEach(function (line) {
+      body.insertParagraph(at, '• ' + line).setIndentStart(18);
+      at += 1;
     });
-    return insertAt;
-  });
-
-  insertAtMarker_(body, '{{POLICY_GUIDE}}', function (anchorIndex) {
-    let insertAt = anchorIndex;
-    (payload.policyGuide || []).forEach(function (line) {
-      body.insertParagraph(insertAt, '• ' + line).setIndentStart(18);
-      insertAt += 1;
-    });
-    return insertAt;
-  });
-
-  // Safety net: verify no leftover placeholder made it into the final text.
-  const finalText = body.getText();
-  const leftovers = validateNoTemplatePlaceholders_(finalText);
-  if (leftovers.length) {
-    throw new ExportError_('TEMPLATE_PLACEHOLDER_LEFT_OVER', 'พบ Placeholder ที่ยังไม่ถูกแทนที่: ' + leftovers.join(', '));
   }
 }
 
-function validateNoTemplatePlaceholders_(text) {
-  const patterns = [/\{\{[^}]*\}\}/, /Lorem ipsum/i, /PLACEHOLDER/i];
-  const found = [];
-  patterns.forEach(function (p) { if (p.test(text)) found.push(String(p)); });
-  return found;
-}
-
-function replaceTokens_(body, tokenMap) {
-  Object.keys(tokenMap).forEach(function (token) {
-    body.replaceText(escapeRegex_(token), String(tokenMap[token] == null ? '' : tokenMap[token]));
-  });
-}
-
-function escapeRegex_(str) {
-  return str.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
-}
-
-// Finds the paragraph containing `marker`, hands its index to `insertFn`
-// (which inserts new paragraphs starting at that index and returns the next
-// free index), then removes the original marker paragraph.
-function insertAtMarker_(body, marker, insertFn) {
-  const paragraphs = body.getParagraphs();
-  for (let i = 0; i < paragraphs.length; i++) {
-    if (paragraphs[i].getText().indexOf(marker) !== -1) {
-      const anchorIndex = body.getChildIndex(paragraphs[i]);
-      insertFn(anchorIndex);
-      // Re-fetch: inserting shifted indices, the marker paragraph is now at
-      // anchorIndex + (number inserted) — simplest robust approach is to
-      // search again by text and remove it.
-      const stillThere = body.getParagraphs().filter(function (p) { return p.getText().indexOf(marker) !== -1; });
-      stillThere.forEach(function (p) { body.removeChild(p); });
-      return;
-    }
-  }
-  Logger.log('Marker not found in template: %s (skipping that section)', marker);
+// One-row Account Summary table: Brand / Platform / Pattern·Use / Live Date.
+function insertAccountSummaryTable_(body, insertAt, payload) {
+  const headers = ['Brand', 'Platform', 'Pattern / Use', 'Live Date'];
+  const values = [
+    payload.account.brand || '—',
+    payload.account.platform || '—',
+    'Pattern ' + payload.account.pattern + (payload.isReview ? ' (Review)' : ''),
+    (payload.account.liveDate || '—') + (payload.account.startTime ? ' ' + payload.account.startTime : '')
+  ];
+  const table = body.insertTable(insertAt, [headers, values]);
+  const headerRow = table.getRow(0);
+  for (let c = 0; c < headerRow.getNumCells(); c++) headerRow.getCell(c).editAsText().setBold(true);
+  return insertAt + 1;
 }
 
 // One Promotion's full Dynamic Block: heading, product/price summary, three
