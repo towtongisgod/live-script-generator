@@ -899,6 +899,7 @@ function buildProductTruth(p){
     promoPrice: p.promoPrice,
     coupon: p.coupon,
     finalPrice: p.finalPrice,
+    finalPriceSource: p.finalPriceSource,
     discount: p.discount,
     discountPercent: p.discountPercent,
     quantityTiers: p.quantityTiers,
@@ -2648,6 +2649,231 @@ function buildValidationNotes(p, assignment){
   return uniqueFilled(notes);
 }
 
+// ---------------------------------------------------------------------------
+// Google Docs Export — Structured Payload Builder
+// Converts one or more already-generated scriptPackage objects (from
+// createScriptPackage) into the Structured Export Payload sent to the
+// Google Apps Script Web App. This is a PURE function: it only reads fields
+// that already exist on the script package (Product Truth, mainSpokenScript,
+// metadata) — it never re-parses rendered text and never invents data.
+// ---------------------------------------------------------------------------
+
+const EXPORT_PAYLOAD_SCHEMA_VERSION = '1.0';
+
+function sanitizeFileNamePart(value){
+  return String(value || '')
+    .replace(/[\\/:*?"<>|]/g, ' ')
+    .replace(/\s+/g, ' ')
+    .trim();
+}
+
+// {BRAND} - {PLATFORM} - Pattern {PATTERN} - {LIVE_DATE} - Live Script
+// or, for a multi-pattern review batch:
+// {BRAND} - {PLATFORM} - Pattern ABC Review - {LIVE_DATE}
+function buildExportDocumentTitle({ brand, platform, patternLabel, liveDate, isReview }){
+  const parts = [
+    sanitizeFileNamePart(brand) || 'UNKNOWN BRAND',
+    sanitizeFileNamePart(platform) || 'UNKNOWN PLATFORM',
+    isReview ? `Pattern ${sanitizeFileNamePart(patternLabel)} Review` : `Pattern ${sanitizeFileNamePart(patternLabel)}`,
+    sanitizeFileNamePart(liveDate) || 'no-date'
+  ];
+  if (!isReview) parts.push('Live Script');
+  return parts.filter(Boolean).join(' - ');
+}
+
+function buildExportProductItems(truth){
+  return (truth.includedProducts || []).map(item => ({
+    name: item.name || '',
+    quantity: item.count != null ? item.count : null,
+    unit: item.unit || ''
+  }));
+}
+
+function buildExportGifts(truth){
+  if (Array.isArray(truth.gifts) && truth.gifts.length) {
+    return truth.gifts.map(g => ({ name: g.name || '', value: g.value != null ? g.value : null, count: g.count != null ? g.count : null }));
+  }
+  return truth.gift ? [{ name: truth.gift, value: truth.giftValue != null ? truth.giftValue : null, count: truth.giftCount || 1 }] : [];
+}
+
+function buildExportSections(mainSpokenScript){
+  return [mainSpokenScript.section1, mainSpokenScript.section2, mainSpokenScript.section3]
+    .filter(Boolean)
+    .map(section => ({
+      title: section.title,
+      estimatedMinutes: section.estimatedMinutes,
+      // Read-verbatim, line-broken Natural Speech Engine text — never
+      // re-joined into one paragraph here.
+      spokenScript: section.text
+    }));
+}
+
+// One script package -> one Promotion block in the payload.
+function buildExportPromotion(scriptPackage, promotionId){
+  const truth = scriptPackage.productTruth || {};
+  const script = scriptPackage.mainSpokenScript || {};
+  return {
+    promotionId: promotionId || truth.promotionTypeId || `promo-${scriptPackage.metadata?.scriptId || '1'}`,
+    productSummary: truth.mainProductText || truth.title || '',
+    productItems: buildExportProductItems(truth),
+    normalPrice: truth.regular != null ? truth.regular : null,
+    promoPrice: truth.promoPrice != null ? truth.promoPrice : null,
+    finalPrice: truth.finalPriceSource === 'explicit' ? truth.finalPrice : null,
+    savingAmount: truth.discount != null ? truth.discount : null,
+    gifts: buildExportGifts(truth),
+    // Empty sections are omitted entirely, never rendered as a placeholder —
+    // the Apps Script side must skip any block whose array/string is empty.
+    sections: buildExportSections(script).filter(s => s.spokenScript),
+    shortLoop30: script.shortLoop30 || '',
+    shortLoop90: script.shortLoop90 || '',
+    qa: (scriptPackage.qAndA || []).filter(item => item && item.question && item.answer),
+    productTalk: [] // populated by callers that have per-variant ingredient/benefit data; omitted (not fabricated) otherwise
+  };
+}
+
+// packages: array of scriptPackage objects that MUST all share the same
+// account + pattern (one Live Slot) UNLESS options.isReview is true (A/B/C
+// review batch, which must be exported as a clearly-labeled REVIEW doc, never
+// silently merged into a production single-Pattern document).
+function buildExportPayload(packages, options = {}){
+  const list = (packages || []).filter(Boolean);
+  if (!list.length) throw new Error('buildExportPayload: no script packages to export');
+  const first = list[0];
+  const isReview = Boolean(options.isReview);
+  const patternLabel = isReview
+    ? uniqueFilled(list.map(item => item.metadata.assignedPattern)).join('')
+    : first.metadata.assignedPattern;
+
+  return {
+    schemaVersion: EXPORT_PAYLOAD_SCHEMA_VERSION,
+    documentTitle: buildExportDocumentTitle({
+      brand: first.metadata.brand,
+      platform: first.metadata.platform,
+      patternLabel,
+      liveDate: first.metadata.liveDate,
+      isReview
+    }),
+    account: {
+      brand: first.metadata.brand,
+      platform: first.metadata.platform,
+      pattern: first.metadata.assignedPattern,
+      patternName: first.pattern?.short_name || first.pattern?.name || '',
+      patternStyle: first.metadata.patternStyle || '',
+      liveDate: first.metadata.liveDate || '',
+      startTime: first.metadata.startTime || ''
+    },
+    isReview,
+    promotions: list.map((item, index) => buildExportPromotion(item, `promo-${index + 1}`)),
+    policyGuide: first.policySafeGuide || [],
+    exportMetadata: {
+      generatedAt: options.generatedAt || first.metadata.generatedAt,
+      generatorVersion: first.metadata.scriptVersion || '',
+      seed: options.seed || list.map(item => item.metadata.scriptId).join('|')
+    }
+  };
+}
+
+// ---------------------------------------------------------------------------
+// Export Validation — must run BEFORE sending the payload to Apps Script.
+// These check the payload against the account the user actually selected on
+// screen and against the exact packages that were generated, so a stale
+// result card or a cross-brand mix-up gets blocked instead of exported.
+// ---------------------------------------------------------------------------
+
+function validateBrandConsistency(payload, selectedAccount){
+  const errors = [];
+  if (!payload || !payload.account) {
+    errors.push('EXPORT_PAYLOAD_MISSING_ACCOUNT');
+    return errors;
+  }
+  if (selectedAccount) {
+    // Compare against the same display label createScriptPackage itself uses
+    // (BRAND_PERSONAS[brand_key].label / PLATFORM_PERSONAS[platform].label),
+    // not the raw brand_key/platform id — those are two different vocabularies
+    // and comparing them directly would false-positive on every valid export.
+    const brandKey = selectedAccount.brand_key || selectedAccount.brandKey || '';
+    const platformKey = selectedAccount.platform || '';
+    const expectedBrand = (BRAND_PERSONAS[brandKey]?.label || brandKey || '').toLowerCase();
+    const expectedPlatform = (PLATFORM_PERSONAS[platformKey]?.label || platformKey || '').toLowerCase();
+    const payloadBrand = String(payload.account.brand || '').toLowerCase();
+    const payloadPlatform = String(payload.account.platform || '').toLowerCase();
+    if (expectedBrand && payloadBrand && payloadBrand !== expectedBrand) {
+      errors.push(`BRAND_MISMATCH: selected ${selectedAccount.brand_key} but payload says ${payload.account.brand}`);
+    }
+    if (expectedPlatform && payloadPlatform && payloadPlatform !== expectedPlatform) {
+      errors.push(`PLATFORM_MISMATCH: selected ${selectedAccount.platform} but payload says ${payload.account.platform}`);
+    }
+  }
+  // Every promotion must agree with the single account/pattern stated at the
+  // top of the payload — a mixed batch (e.g. one card from a different
+  // account leaking into the export) must never reach Apps Script.
+  (payload.promotions || []).forEach((promo, index) => {
+    if (!promo.productSummary && !(promo.sections || []).length) {
+      errors.push(`PROMOTION_${index + 1}_EMPTY`);
+    }
+  });
+  return errors;
+}
+
+// Confirms the payload's price/quantity/gift numbers are the SAME numbers
+// that are on screen right now (the exact scriptPackage objects the user
+// generated), not re-derived or re-parsed from anywhere else.
+function validatePromotionTruth(payload, sourcePackages){
+  const errors = [];
+  const list = (sourcePackages || []).filter(Boolean);
+  (payload.promotions || []).forEach((promo, index) => {
+    const source = list[index];
+    if (!source) { errors.push(`PROMOTION_${index + 1}_NO_SOURCE_PACKAGE`); return; }
+    const truth = source.productTruth || {};
+    if ((promo.normalPrice ?? null) !== (truth.regular ?? null)) errors.push(`PROMOTION_${index + 1}_NORMAL_PRICE_DRIFT`);
+    if ((promo.promoPrice ?? null) !== (truth.promoPrice ?? null)) errors.push(`PROMOTION_${index + 1}_PROMO_PRICE_DRIFT`);
+    if ((promo.savingAmount ?? null) !== (truth.discount ?? null)) errors.push(`PROMOTION_${index + 1}_SAVING_DRIFT`);
+  });
+  return errors;
+}
+
+const TEMPLATE_PLACEHOLDER_PATTERNS = [
+  /\{\{[^}]*\}\}/,        // {{placeholder}}
+  /\[Sample[^\]]*\]/i,
+  /Lorem ipsum/i,
+  /PLACEHOLDER/i,
+  /ตัวอย่างสินค้า(?!ที่ระบุ)/,
+  /XXX+/
+];
+
+// Runs against the FINAL populated document text (Apps Script side, or a
+// dry-run string in tests) to catch template placeholders / sample data that
+// should have been overwritten but weren't.
+function validateNoTemplatePlaceholders(documentText){
+  const text = String(documentText || '');
+  return TEMPLATE_PLACEHOLDER_PATTERNS
+    .filter(pattern => pattern.test(text))
+    .map(pattern => `TEMPLATE_PLACEHOLDER_FOUND: ${pattern}`);
+}
+
+// Full pre-export gate: schema completeness + brand consistency + Product
+// Truth match. Export must be BLOCKED (not sent) if this returns any errors.
+function validateExportPayload(payload, context = {}){
+  const errors = [];
+  if (!payload || payload.schemaVersion !== EXPORT_PAYLOAD_SCHEMA_VERSION) errors.push('INVALID_SCHEMA_VERSION');
+  if (!payload?.documentTitle || /undefined|null/i.test(payload.documentTitle)) errors.push('INVALID_DOCUMENT_TITLE');
+  if (!payload?.promotions?.length) errors.push('NO_PROMOTIONS');
+  errors.push(...validateBrandConsistency(payload, context.selectedAccount));
+  if (context.sourcePackages) errors.push(...validatePromotionTruth(payload, context.sourcePackages));
+  return uniqueFilled(errors);
+}
+
+// Deterministic Idempotency Key: account + liveDate + pattern + payload hash.
+// Sent to Apps Script so a double-click / retry within the dedupe window
+// reuses the same document instead of creating a duplicate.
+function buildExportIdempotencyKey(payload){
+  const account = payload?.account || {};
+  const stableSeed = [account.brand, account.platform, account.pattern, account.liveDate, account.startTime, payload?.isReview ? 'REVIEW' : '']
+    .join('|');
+  const payloadHash = hashString(JSON.stringify(payload?.promotions || []));
+  return `${stableSeed}|${payloadHash}`;
+}
+
 function estimateSpeakingTime(text){
   const compactLength = String(text || '').replace(/\s+/g, '').length;
   const minutes = compactLength / 360;
@@ -2866,6 +3092,9 @@ if (typeof module !== 'undefined' && module.exports) {
     STRATEGIES, STRATEGY_META, STRATEGY_ALIASES, normalizePatternKey, resolveAssignedPattern,
     getCommunicationProfile, createScriptPackage, createScript, enforceLanguageRules, getBrandKey,
     getSectionTitles, buildQAndA, buildPolicySafeGuide, speakingTimeWarning,
-    hashString, getSpeechSeed, seededIndex, seededPick, joinSpoken, lintNaturalSpeech, AI_LIKE_PHRASES
+    hashString, getSpeechSeed, seededIndex, seededPick, joinSpoken, lintNaturalSpeech, AI_LIKE_PHRASES,
+    buildExportPayload, buildExportDocumentTitle, buildExportIdempotencyKey, sanitizeFileNamePart,
+    validateExportPayload, validateBrandConsistency, validatePromotionTruth, validateNoTemplatePlaceholders,
+    EXPORT_PAYLOAD_SCHEMA_VERSION
   };
 }

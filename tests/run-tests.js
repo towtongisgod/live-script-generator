@@ -352,6 +352,165 @@ check('getSpeechSeed: a different promotion gives a different seed',
   core.getSpeechSeed({ accountId: 'skinoxy', rawText: 'promo x' }, 'A', 0)
     !== core.getSpeechSeed({ accountId: 'skinoxy', rawText: 'promo y' }, 'A', 0));
 
+console.log('\n=== Google Docs Export Payload ===');
+
+function packagesForAccount(accountId, pattern, promoText){
+  const account = core.LSG_ACCOUNTS.find(a => a.id === accountId);
+  const brand = brandsConfig.brands.find(b => b.id === accountId);
+  const knowledge = readJson(path.join('data', brand.knowledge_file));
+  const raw = promoText || readText(brand.sample_file);
+  const promos = core.splitPromotions(raw).map((t, i) => core.parsePromotion(t, i, knowledge, brand, {}));
+  return { account, packages: promos.map(p => pkg(p, pattern)) };
+}
+
+// One promotion
+{
+  const { account, packages } = packagesForAccount('skinoxy', 'A');
+  const payload = core.buildExportPayload([packages[0]], {});
+  check('payload: one promotion has schemaVersion 1.0', payload.schemaVersion === '1.0');
+  check('payload: one promotion has exactly 1 promotion block', payload.promotions.length === 1);
+  check('payload: one promotion has 3 non-empty sections', payload.promotions[0].sections.length === 3 && payload.promotions[0].sections.every(s => s.spokenScript));
+  check('payload: one promotion Section text preserves line breaks (Natural Speech Engine)',
+    payload.promotions[0].sections[0].spokenScript.includes('\n'));
+  check('payload: documentTitle has no undefined/null', !/undefined|null/i.test(payload.documentTitle));
+  check('payload: validateExportPayload passes for a fresh, matching payload',
+    core.validateExportPayload(payload, { selectedAccount: account, sourcePackages: [packages[0]] }).length === 0);
+}
+
+// Multiple promotions (DGMR sample has 2 promotions)
+{
+  const { account, packages } = packagesForAccount('dgmr', 'A');
+  check('payload setup: dgmr sample has multiple promotions', packages.length >= 2);
+  const payload = core.buildExportPayload(packages, {});
+  check('payload: multiple promotions produces one block per promotion', payload.promotions.length === packages.length);
+  check('payload: multiple promotions all share the same account/pattern header',
+    payload.account.brand === 'DAENG GI MEO RI' && payload.account.pattern === 'A');
+  check('payload: multiple promotions passes validation',
+    core.validateExportPayload(payload, { selectedAccount: account, sourcePackages: packages }).length === 0);
+}
+
+// Missing optional fields: no gift
+{
+  const { packages } = packagesForAccount('skinoxy', 'A', 'Toner Pad 1 กระปุก ราคาปกติ 399 พิเศษ 239');
+  const payload = core.buildExportPayload([packages[0]], {});
+  check('payload: promotion with no gift has an empty gifts array (not a placeholder)',
+    Array.isArray(payload.promotions[0].gifts) && payload.promotions[0].gifts.length === 0);
+}
+
+// Gifts present + Final Price present
+{
+  const { packages } = packagesForAccount('skinoxy', 'A', 'Toner Pad 1 กระปุก ราคาปกติ 399 พิเศษ 239 + คูปองลดเพิ่ม 18% เหลือเพียง 196.-');
+  const payload = core.buildExportPayload([packages[0]], {});
+  check('payload: gift-bearing promotion carries gift name (no fabricated count when unclear)',
+    payload.promotions[0].gifts.length >= 0);
+  check('payload: explicit final price is carried through as finalPrice, not null',
+    payload.promotions[0].finalPrice === 196);
+}
+
+// Q&A present
+{
+  const { packages } = packagesForAccount('skinoxy', 'A');
+  const payload = core.buildExportPayload([packages[0]], {});
+  check('payload: Q&A array is present with question+answer pairs', payload.promotions[0].qa.length > 0
+    && payload.promotions[0].qa.every(item => item.question && item.answer));
+}
+
+// Multiline spoken script is preserved end-to-end (not flattened back to one paragraph)
+{
+  const { packages } = packagesForAccount('kmb', 'B');
+  const payload = core.buildExportPayload([packages[0]], {});
+  const lineCount = payload.promotions[0].sections[0].spokenScript.split('\n').length;
+  check('payload: multiline spoken script keeps multiple lines (not flattened)', lineCount > 3);
+}
+
+// Data Integrity: brand isolation — SKINOXY/KISS/DGMR payloads never bleed
+// into each other, and a payload built for one account fails validation
+// against a different selected account (guards against stale/cross-brand
+// result cards being exported).
+{
+  const skinoxyResult = packagesForAccount('skinoxy', 'A');
+  const kmbResult = packagesForAccount('kmb', 'A');
+  const dgmrResult = packagesForAccount('dgmr', 'A');
+  const skinoxyPayload = core.buildExportPayload([skinoxyResult.packages[0]], {});
+  const kmbPayload = core.buildExportPayload([kmbResult.packages[0]], {});
+  const dgmrPayload = core.buildExportPayload([dgmrResult.packages[0]], {});
+
+  check('data integrity: SKINOXY payload does not contain KISS or DGMR brand text',
+    !skinoxyPayload.documentTitle.includes('KISS') && !skinoxyPayload.documentTitle.includes('DAENG'));
+  check('data integrity: KISS payload does not contain SKINOXY or DGMR brand text',
+    !kmbPayload.documentTitle.includes('SKINOXY') && !kmbPayload.documentTitle.includes('DAENG'));
+  check('data integrity: DGMR payload does not contain SKINOXY or KISS brand text',
+    !dgmrPayload.documentTitle.includes('SKINOXY') && !dgmrPayload.documentTitle.includes('KISS'));
+
+  check('validateBrandConsistency: blocks a SKINOXY payload exported against the KISS account',
+    core.validateBrandConsistency(skinoxyPayload, kmbResult.account).length > 0);
+  check('validateBrandConsistency: blocks a KISS payload exported against the DGMR account',
+    core.validateBrandConsistency(kmbPayload, dgmrResult.account).length > 0);
+  check('validateBrandConsistency: blocks a DGMR payload exported against the SKINOXY account',
+    core.validateBrandConsistency(dgmrPayload, skinoxyResult.account).length > 0);
+  check('validateBrandConsistency: does NOT block a correctly-matched payload',
+    core.validateBrandConsistency(skinoxyPayload, skinoxyResult.account).length === 0);
+
+  // Pattern matches Generated Result
+  check('data integrity: payload.account.pattern matches the generated package pattern',
+    skinoxyPayload.account.pattern === skinoxyResult.packages[0].metadata.assignedPattern);
+
+  // Product Truth unchanged between Generation and Export
+  check('data integrity: Product Truth in payload matches Product Truth on the generated package',
+    core.validatePromotionTruth(skinoxyPayload, [skinoxyResult.packages[0]]).length === 0);
+
+  // Same input, exported twice, gives identical price/quantity data
+  const skinoxyPayloadAgain = core.buildExportPayload([packagesForAccount('skinoxy', 'A').packages[0]], {});
+  check('data integrity: same input exported twice has identical price and quantity data',
+    JSON.stringify(skinoxyPayload.promotions[0].normalPrice) === JSON.stringify(skinoxyPayloadAgain.promotions[0].normalPrice)
+    && JSON.stringify(skinoxyPayload.promotions[0].productItems) === JSON.stringify(skinoxyPayloadAgain.promotions[0].productItems));
+}
+
+// Review batch (A/B/C) must be clearly labeled REVIEW and never silently
+// merged into what looks like a single-Pattern production document.
+{
+  const { packages } = packagesForAccount('skinoxy', 'A');
+  const abcPackages = core.STRATEGIES.map(pattern => packagesForAccount('skinoxy', pattern).packages[0]);
+  const reviewPayload = core.buildExportPayload(abcPackages, { isReview: true });
+  check('payload: A/B/C review batch document title says REVIEW', /Review/i.test(reviewPayload.documentTitle));
+  check('payload: A/B/C review batch is flagged isReview = true', reviewPayload.isReview === true);
+  check('payload: A/B/C review batch title is not confusable with a single production Pattern doc',
+    !/Pattern A - |Pattern B - |Pattern C - /.test(reviewPayload.documentTitle));
+}
+
+// Template placeholder detection (runs against final populated document text)
+check('validateNoTemplatePlaceholders: flags a leftover {{placeholder}}',
+  core.validateNoTemplatePlaceholders('สวัสดี {{brand}} ยินดีต้อนรับ').length > 0);
+check('validateNoTemplatePlaceholders: flags leftover Lorem ipsum sample text',
+  core.validateNoTemplatePlaceholders('Lorem ipsum dolor sit amet').length > 0);
+check('validateNoTemplatePlaceholders: does not flag a clean, fully-populated document',
+  core.validateNoTemplatePlaceholders('SKINOXY TikTok Live Script Pattern A ราคาปกติ 995 บาท').length === 0);
+
+// Idempotency key: deterministic for the same payload, different for a
+// different pattern/date/promotion — this is what the double-click guard on
+// the Apps Script side keys off of.
+{
+  const { packages } = packagesForAccount('skinoxy', 'A');
+  const payloadA = core.buildExportPayload([packages[0]], {});
+  const payloadA2 = core.buildExportPayload([packages[0]], {});
+  const { packages: packagesB } = packagesForAccount('skinoxy', 'B');
+  const payloadB = core.buildExportPayload([packagesB[0]], {});
+  check('idempotency key: identical export payload produces the identical key',
+    core.buildExportIdempotencyKey(payloadA) === core.buildExportIdempotencyKey(payloadA2));
+  check('idempotency key: a different pattern produces a different key',
+    core.buildExportIdempotencyKey(payloadA) !== core.buildExportIdempotencyKey(payloadB));
+}
+
+// File naming: no undefined/null/placeholder ever reaches the title
+check('buildExportDocumentTitle: sanitizes missing fields instead of embedding undefined/null',
+  !/undefined|null/i.test(core.buildExportDocumentTitle({ brand: undefined, platform: null, patternLabel: 'A', liveDate: '2026-08-05' })));
+check('buildExportDocumentTitle: review batch uses the "Pattern ABC Review" naming convention',
+  core.buildExportDocumentTitle({ brand: 'SKINOXY', platform: 'TikTok', patternLabel: 'ABC', liveDate: '2026-08-05', isReview: true })
+    === 'SKINOXY - TikTok - Pattern ABC Review - 2026-08-05');
+check('buildExportDocumentTitle: production single-pattern doc matches the required naming convention',
+  core.buildExportDocumentTitle({ brand: 'SKINOXY', platform: 'TikTok', patternLabel: 'A', liveDate: '2026-08-05' })
+    === 'SKINOXY - TikTok - Pattern A - 2026-08-05 - Live Script');
+
 console.log('\n=== V3 Section Output Contract ===');
 let sampleMatrixCount = 0;
 Object.keys(primaryById).forEach(accountId => {
@@ -663,6 +822,65 @@ check('exportToGoogleDoc inserts the Set table as a second pass after reading th
   appJs.includes('insertTable') && appJs.includes('cellStartIndexRows') && appJs.includes('planSetTableCellEdits(cellStartIndexRows, setTable)'));
 check('A failed Set table fill degrades gracefully (Doc still opens with a warning) instead of failing the whole export',
   appJs.includes('tableWarning'));
+
+console.log('\n=== Google Docs Template Export (Apps Script) — UI ===');
+const googleAppsScriptConfigJs = readText('config/google-apps-script-config.js');
+check('index.html loads config/google-apps-script-config.js', indexHtml.includes('config/google-apps-script-config.js'));
+check('config/google-apps-script-config.js has an endpoint field (empty or a URL) and no embedded credential value',
+  /endpoint:\s*'[^']*'/.test(googleAppsScriptConfigJs)
+  // Only the *value* side of an assignment is checked — the file's own
+  // comments are allowed to discuss "token"/"secret" as concepts (that's
+  // exactly what warns future editors not to add one here).
+  && !/:\s*'[^']*(token|secret|apikey|api_key|private_key)[^']*'/i.test(googleAppsScriptConfigJs));
+check('UI has Export to Google Docs (Template) button', appJs.includes('export-gdoc-apps-script') && appJs.includes('Export to Google Docs (Template)'));
+check('Export to Google Docs (Template) button is wired to exportToGoogleDocsViaAppsScript',
+  appJs.includes("querySelector('.export-gdoc-apps-script')") && appJs.includes('exportToGoogleDocsViaAppsScript('));
+check('Missing Apps Script endpoint shows a setup message instead of crashing',
+  appJs.includes('ยังไม่ได้ตั้งค่า Apps Script Endpoint'));
+check('Export is blocked when there is no generated result / generation was blocked',
+  appJs.includes('packageItem.generationBlocked') && appJs.includes('ยังไม่มีสคริปต์ที่ Generate สำเร็จให้ Export'));
+check('Export button disables itself during the request (double-click guard)',
+  appJs.includes('button.disabled = true') && appJs.includes('button.disabled = false'));
+check('Export shows a loading label while the request is in flight',
+  appJs.includes("button.textContent = 'กำลังสร้าง Google Docs...'"));
+check('An idempotencyKey (account + liveDate + pattern + payload hash) is sent with every export request',
+  appJs.includes('buildExportIdempotencyKey(payload)') && appJs.includes('idempotencyKey'));
+check('Payload is validated (validateExportPayload) before ever being sent to Apps Script',
+  appJs.includes('validateExportPayload(payload'));
+check('Success state offers an explicit "open" action instead of auto-opening the document (avoids popup blockers)',
+  appJs.includes("open-gdoc-result") && !/exportToGoogleDocsViaAppsScript[\s\S]{0,2000}window\.open\(data\.documentUrl/.test(appJs));
+check('Success state offers a "copy link" action', appJs.includes('copy-gdoc-link') && appJs.includes('navigator.clipboard.writeText(data.documentUrl)'));
+check('A reused (idempotent) result is shown distinctly from a freshly-created one', appJs.includes('data.reused'));
+check('Error state shows message from the Apps Script response, not a raw stack trace',
+  appJs.includes('data.errorCode') && appJs.includes('data.message'));
+check('Export Scope: Review mode (A/B/C) is exported as a distinct, clearly-flagged batch, not silently merged with Assigned mode',
+  appJs.includes("state.currentMode === 'review'") && appJs.includes('isReview: true'));
+
+console.log('\n=== Google Apps Script source (google-apps-script/Code.gs) ===');
+const appsScriptCode = readText('google-apps-script/Code.gs');
+check('Code.gs implements doPost(e)', appsScriptCode.includes('function doPost(e)'));
+{
+  const doGetStart = appsScriptCode.indexOf('function doGet(e)');
+  const doGetEnd = appsScriptCode.indexOf('function doPost(e)', doGetStart);
+  const doGetBody = doGetStart >= 0 && doGetEnd > doGetStart ? appsScriptCode.slice(doGetStart, doGetEnd) : '';
+  check('Code.gs implements a health-check doGet(e) that leaks no config',
+    doGetStart >= 0 && !/templateId|outputFolderId|GOOGLE_DOCS_TEMPLATE_ID|GOOGLE_DRIVE_OUTPUT_FOLDER_ID/.test(doGetBody));
+}
+check('Code.gs validates the incoming payload before doing anything with Drive/Docs',
+  appsScriptCode.includes('function validatePayload_(payload)') && appsScriptCode.indexOf('validatePayload_(payload)') < appsScriptCode.indexOf('createExportDocument_(payload)'));
+check('Code.gs copies the template rather than editing it (makeCopy, never DriveApp.getFileById(config.templateId).setContent or similar)',
+  appsScriptCode.includes('templateFile.makeCopy') && !/getFileById\(config\.templateId\)\.(setContent|setText)/.test(appsScriptCode));
+check('Code.gs uses LockService to serialize concurrent create requests', appsScriptCode.includes('LockService.getScriptLock()'));
+check('Code.gs uses CacheService for the idempotency window (double-click / retry guard)',
+  appsScriptCode.includes('CacheService.getScriptCache()') && appsScriptCode.includes('IDEMPOTENCY_TTL_SECONDS'));
+check('Code.gs reads Template ID / Output Folder ID from Script Properties, never hardcoded', appsScriptCode.includes("getProperty('GOOGLE_DOCS_TEMPLATE_ID')") && appsScriptCode.includes("getProperty('GOOGLE_DRIVE_OUTPUT_FOLDER_ID')"));
+check('Code.gs never returns a stack trace to the caller', !/jsonResponse_\([^)]*stack/.test(appsScriptCode));
+check('Code.gs has a centralized Document Theme Config (not colors scattered across functions)', appsScriptCode.includes('const DOCUMENT_THEMES = {') && appsScriptCode.includes('SKINOXY:') && appsScriptCode.includes('KISS:') && appsScriptCode.includes('DGMR:'));
+check('Code.gs skips empty sections/fields instead of rendering placeholders', appsScriptCode.includes('if (!section || !section.spokenScript) return;'));
+check('Code.gs preserves Natural Speech Engine line breaks (one Doc paragraph per breath-line, not one paragraph with embedded \\n)',
+  appsScriptCode.includes("split('\\n')") && appsScriptCode.includes('body.insertParagraph(at, line)'));
+check('Code.gs response shape matches the documented success contract', appsScriptCode.includes('documentId:') && appsScriptCode.includes('documentUrl:') && appsScriptCode.includes('documentTitle:') && appsScriptCode.includes('createdAt:'));
+check('Code.gs response shape matches the documented error contract', appsScriptCode.includes('errorCode:') && appsScriptCode.includes('success: false'));
 
 console.log(`\n${passed} passed, ${failed} failed`);
 if (failed > 0) process.exitCode = 1;

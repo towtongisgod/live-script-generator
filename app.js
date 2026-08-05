@@ -481,7 +481,9 @@ function renderScriptCard(p, packageItem, mode){
         <button class="print-form">Print / Form View</button>
         <button class="export-json">Export JSON</button>
         <button class="export-gdoc">Export to Google Doc</button>
+        <button class="export-gdoc-apps-script">Export to Google Docs (Template)</button>
       </div>
+      <div class="apps-script-export-result" hidden></div>
     </div>
 
     <div class="script-meta">
@@ -595,6 +597,10 @@ function renderScriptCard(p, packageItem, mode){
 
   card.querySelector('.export-gdoc').addEventListener('click', () => {
     exportToGoogleDoc(packageItem);
+  });
+
+  card.querySelector('.export-gdoc-apps-script').addEventListener('click', (evt) => {
+    exportToGoogleDocsViaAppsScript(packageItem, evt.currentTarget, card.querySelector('.apps-script-export-result'));
   });
 
   card.querySelector('.generate-again').addEventListener('click', () => {
@@ -1147,4 +1153,102 @@ async function exportToGoogleDoc(packageItem){
   setStatus(tableWarning
     ? `Generated: สร้าง Google Doc รวม ${packages.length} โปรโมชั่น (Pattern ${packageItem.metadata.assignedPattern}) แล้ว แต่ตาราง Set ใส่ข้อมูลไม่สำเร็จ (${tableWarning}) — เปิด Doc แล้วเติมตารางเองได้`
     : `Generated: สร้าง Google Doc รวม ${packages.length} โปรโมชั่น (Pattern ${packageItem.metadata.assignedPattern}) แล้ว เปิดลิงก์ในแท็บใหม่`);
+}
+
+// ---------------------------------------------------------------------------
+// Export to Google Docs via the Google Apps Script Web App (Master Template
+// copy + Structured Payload). Unlike exportToGoogleDoc above (direct OAuth
+// call to the Docs API from the browser), this path holds no Google
+// credential in the frontend at all — it only POSTs plain JSON to the
+// configured Apps Script endpoint. See google-apps-script/README.md.
+// ---------------------------------------------------------------------------
+function getGoogleAppsScriptConfig(){
+  return (typeof GOOGLE_APPS_SCRIPT_CONFIG !== 'undefined' && GOOGLE_APPS_SCRIPT_CONFIG) || { endpoint: '' };
+}
+
+// Same-account bundle: Assigned mode groups by account+Pattern (one Live
+// Slot); Review mode groups by account only, across all generated Patterns,
+// and is exported with isReview=true so the filename/doc are unmistakably
+// marked REVIEW rather than looking like a production single-Pattern script.
+function collectAppsScriptExportBundle(packageItem){
+  const isReview = state.currentMode === 'review';
+  const sameAccount = (state.lastPackages || []).filter(pkg => pkg.metadata.account === packageItem.metadata.account);
+  if (isReview) {
+    return { isReview: true, packages: sameAccount.length ? sameAccount : [packageItem] };
+  }
+  const bundle = sameAccount.filter(pkg => pkg.metadata.assignedPattern === packageItem.metadata.assignedPattern);
+  return { isReview: false, packages: bundle.length ? bundle : [packageItem] };
+}
+
+async function exportToGoogleDocsViaAppsScript(packageItem, button, resultBox){
+  const config = getGoogleAppsScriptConfig();
+  if (!config.endpoint) {
+    setStatus('Warning: ยังไม่ได้ตั้งค่า Apps Script Endpoint — ใส่ค่าใน config/google-apps-script-config.js ก่อนใช้ Export to Google Docs (Template)');
+    return;
+  }
+  if (!packageItem || packageItem.generationBlocked) {
+    setStatus('Warning: ยังไม่มีสคริปต์ที่ Generate สำเร็จให้ Export');
+    return;
+  }
+
+  const { isReview, packages } = collectAppsScriptExportBundle(packageItem);
+  const payload = buildExportPayload(packages, { isReview });
+
+  const selectedAccount = (state.brands || []).find(b => b.id === state.activeBrandId)
+    || (state.allBrands || []).find(b => b.id === state.activeBrandId);
+  const validationErrors = validateExportPayload(payload, { selectedAccount, sourcePackages: packages });
+  if (validationErrors.length) {
+    setStatus(`Warning: Export ถูกระงับเพราะข้อมูลไม่ตรงกัน (${validationErrors.join(', ')})`);
+    return;
+  }
+
+  const idempotencyKey = buildExportIdempotencyKey(payload);
+
+  // Disable + loading state guards against a double-click firing two create
+  // requests before the first response comes back.
+  button.disabled = true;
+  const originalLabel = button.textContent;
+  button.textContent = 'กำลังสร้าง Google Docs...';
+  resultBox.hidden = true;
+  resultBox.innerHTML = '';
+  setStatus('Generating: กำลังส่งข้อมูลไปสร้าง Google Docs จาก Template...');
+
+  try {
+    const res = await fetch(config.endpoint, {
+      method: 'POST',
+      headers: { 'Content-Type': 'text/plain;charset=utf-8' }, // avoids an extra CORS preflight against Apps Script
+      body: JSON.stringify({ idempotencyKey, payload })
+    });
+    const data = await res.json();
+
+    if (!data.success) {
+      setStatus(`Warning: Export ไม่สำเร็จ (${data.errorCode || 'UNKNOWN'}) — ${data.message || 'กรุณาลองใหม่อีกครั้ง'}`);
+      resultBox.hidden = true;
+      return;
+    }
+
+    resultBox.hidden = false;
+    resultBox.innerHTML = `
+      <p>สร้างเอกสารสำเร็จ${data.reused ? ' (ใช้เอกสารเดิมที่เคยสร้างไว้ ไม่สร้างซ้ำ)' : ''}: <strong>${escapeHtml(data.documentTitle || '')}</strong></p>
+      <button class="open-gdoc-result" type="button">เปิด Google Docs</button>
+      <button class="copy-gdoc-link" type="button">คัดลอกลิงก์</button>
+    `;
+    resultBox.querySelector('.open-gdoc-result').addEventListener('click', () => {
+      // Only ever opened on a direct user click — never automatically —
+      // so this never gets caught by a popup blocker.
+      window.open(data.documentUrl, '_blank');
+    });
+    resultBox.querySelector('.copy-gdoc-link').addEventListener('click', async () => {
+      await navigator.clipboard.writeText(data.documentUrl);
+      setStatus('Copy successful: คัดลอกลิงก์ Google Docs แล้ว');
+    });
+
+    setStatus(`Generated: สร้าง Google Docs "${data.documentTitle}" แล้ว`);
+  } catch (err) {
+    setStatus(`Warning: เชื่อมต่อ Apps Script ไม่สำเร็จ (${err.message}) — ลองกด Export อีกครั้งได้ ระบบมี Idempotency Key ป้องกันไฟล์ซ้ำ`);
+    resultBox.hidden = true;
+  } finally {
+    button.disabled = false;
+    button.textContent = originalLabel;
+  }
 }
