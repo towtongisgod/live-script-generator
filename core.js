@@ -306,6 +306,13 @@ function extractDgmrMainItemCount(text){
 function cleanupPhrase(text){
   const cleaned = String(text || '')
     .replace(/\s+/g, ' ')
+    // Conversational filler particles ("สีชมพูนะ" -> "สีชมพู"). Thai has no
+    // spaces between words, so these are glued directly onto the preceding
+    // word ("ชมพู" + "นะ") — only stripped when immediately followed by a
+    // boundary (space, closing paren, or end), so it can't cut into the
+    // middle of an unrelated longer word.
+    .replace(/(นะ|จ้า|ค่ะ|ครับ)(?=[\s)]|$)/g, '')
+    .replace(/\s+/g, ' ')
     .replace(/\s*[+|,]\s*$/g, '')
     .replace(/\s*[-–—]\s*$/g, '')
     .trim();
@@ -763,6 +770,24 @@ function splitPromotions(raw){
       const start = match.index + match[0].length;
       const end = index + 1 < numberedMatches.length
         ? numberedMatches[index + 1].index
+        : normalized.length;
+      return normalized.slice(start, end).trim();
+    }).filter(Boolean);
+  }
+
+  // Bullet-per-promotion style (common in TikTok captions): each line
+  // starting with "- " or "• " is its own promotion boundary. This must NOT
+  // depend on there being a blank line between them, or on 2+ "ราคาปกติ"
+  // mentions — one bulleted promotion may have no price at all (still its
+  // own promotion, just Missing Price), and merging it with its neighbor by
+  // waiting for a blank line would let a "ฟรี"/product mention from one
+  // promotion bleed into the other's Product Truth.
+  const bulletMatches = [...normalized.matchAll(/(?:^|\n)[ \t]*[-•][ \t]+(?=\S)/g)];
+  if (bulletMatches.length > 1) {
+    return bulletMatches.map((match, index) => {
+      const start = match.index + match[0].length;
+      const end = index + 1 < bulletMatches.length
+        ? bulletMatches[index + 1].index
         : normalized.length;
       return normalized.slice(start, end).trim();
     }).filter(Boolean);

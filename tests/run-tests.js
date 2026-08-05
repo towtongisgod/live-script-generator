@@ -374,6 +374,67 @@ console.log('\n=== KISS/SKINOXY TikTok: cross-brand "+" bundle item no longer in
   check('DGMR 2 (golden): no Critical Error', !dgmr2.productTruthValidation.blocked);
 }
 
+console.log('\n=== Bullet ("-") Promotion Boundaries — multiple TikTok promotions in one paste, no blank line ===');
+{
+  const kissBrand = brandsConfig.brands.find(b => b.id === 'kmb');
+  const kissKnowledge = readJson(path.join('data', kissBrand.knowledge_file));
+
+  // Test 1: Exact User Input — two bullet promotions, no blank line, second
+  // promotion has no price at all. Must split into 2 independent promotions,
+  // never merge into one (which previously mixed Promotion 2's "ฟรี" gift
+  // into Promotion 1's Product Truth and vice versa).
+  const rawInput = '- Nude & Naked intense EDP 1 ขวด + Skinoxy Toner Pad (สีชมพูนะ) 10 แผ่น 1 ซอง พิเศษ 509 จากปกติ 1,039\n- Shower Gel กด 2 ขวด ฟรี Skinoxy Toner Pad 10 แผ่น 1 ซอง (สีชมพูนะ)';
+  const bulletPromos = core.splitPromotions(rawInput);
+  check('Test 1: exact user input splits into exactly 2 promotions', bulletPromos.length === 2);
+
+  if (bulletPromos.length === 2) {
+    const p1 = core.parsePromotion(bulletPromos[0], 0, kissKnowledge, kissBrand, {});
+    const p2 = core.parsePromotion(bulletPromos[1], 1, kissKnowledge, kissBrand, {});
+    const item1 = pkg(p1, 'A');
+    const item2 = pkg(p2, 'A');
+
+    check('Test 1 / Promotion 1: main item is Nude & Naked EDP, quantity 1 (not inflated by the "+" bundle item)',
+      p1.itemCount === 1 && /Nude & Naked/i.test(p1.mainProductText || ''));
+    check('Test 1 / Promotion 1: normal 1,039 / final 509 parsed correctly', p1.regular === 1039 && p1.promoPrice === 509);
+    check('Test 1 / Promotion 1: no Critical Error, Main Script generates', !item1.generationBlocked);
+    check('Test 1 / Promotion 1: does NOT borrow Promotion 2\'s "ฟรี Shower Gel" — its own gift/bundle mention is the SKINOXY Toner Pad, nothing about Shower Gel',
+      !/Shower Gel/i.test(p1.gift || ''));
+
+    check('Test 1 / Promotion 2: main item is Shower Gel, quantity 2', p2.itemCount === 2 && /Shower Gel/i.test(p2.mainProductText || ''));
+    check('Test 1 / Promotion 2: gift is the SKINOXY Toner Pad', /Toner Pad/i.test(p2.gift || ''));
+    check('Test 1 / Promotion 2: no price at all — normal/promo both null (not borrowed from Promotion 1\'s 1,039/509)',
+      p2.regular === null && p2.promoPrice === null);
+    check('Test 1 / Promotion 2: no Critical Error (only a Missing Price situation, never Product/Gift conflict)',
+      !item2.generationBlocked);
+
+    // Same Toner Pad SKU appears in BOTH promotions — must be independent
+    // entities, not merged/conflicting across the promotion boundary.
+    check('Test 1: the same Toner Pad SKU mentioned in both promotions does not trigger a cross-promotion duplicate/conflict',
+      !item1.generationBlocked && !item2.generationBlocked);
+  }
+
+  // Test 4 (Conversational Variant): "(สีชมพูนะ)" must normalize to "(สีชมพู)"
+  // — the "นะ" filler dropped, the color itself preserved.
+  check('Test 4: "สีชมพูนะ" normalizes to "สีชมพู" (filler stripped, color kept)',
+    core.cleanupPhrase('Toner Pad (สีชมพูนะ) 10 แผ่น 1 ซอง').includes('สีชมพู')
+    && !core.cleanupPhrase('Toner Pad (สีชมพูนะ) 10 แผ่น 1 ซอง').includes('สีชมพูนะ'));
+
+  // Test 6 (Bundle Without Free): "+" with no gift keyword and a price that
+  // covers the whole line is a bundle, not a gift — must not conflict.
+  const t6 = core.parsePromotion('EDP 1 ขวด + Toner Pad 1 ซอง ราคา 509', 0, kissKnowledge, kissBrand, {});
+  check('Test 6: "+" with no gift keyword does not block generation', !pkg(t6, 'A').generationBlocked);
+
+  // Test 5 (Explicit Free) — re-confirm with this exact phrasing.
+  const t5 = core.parsePromotion('Shower Gel กด 2 ขวด ฟรี Skinoxy Toner Pad 1 ซอง', 0, kissKnowledge, kissBrand, {});
+  check('Test 5: explicit "ฟรี" gift produces no conflict', !pkg(t5, 'A').generationBlocked);
+
+  // No-blank-line, 2 plain bullet promotions sharing a same-name secondary
+  // product with DIFFERENT roles across promotions (Test 3's shape).
+  const noBlankLine = core.splitPromotions('- Product A + Product B ราคา 100\n- Product C ฟรี Product B');
+  check('Test 3 (No Blank Line): still splits into 2 promotions even with fully generic product names',
+    noBlankLine.length === 2);
+}
+
 console.log('\n=== Script generation, compliance, and structure ===');
 const BANNED = ['ตะกร้าสีเหลือง', 'ครับ', 'ค่ะ', 'นะครับ', 'นะคะ', 'รักษา', 'หายขาด', 'Session 1', 'Session 2', 'Session 3'];
 // Guide/outline language that must never survive into the spoken script — the Section
