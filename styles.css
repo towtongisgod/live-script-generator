@@ -360,3 +360,22 @@ pre{
   textarea{min-height:220px}
   pre{font-size:14px}
 }
+
+/* Promotion Parser V2 — read-only preview (Beta) */
+.parser-v2-preview{margin:18px 0;padding:16px;border:1px dashed #999;border-radius:8px;background:#fafafa}
+.parser-v2-cards{display:grid;grid-template-columns:repeat(auto-fill,minmax(280px,1fr));gap:12px;margin-top:10px}
+.parser-v2-card{border:1px solid #ddd;border-radius:6px;padding:10px 12px;background:#fff}
+.parser-v2-card.has-error{border-color:#c0392b}
+.parser-v2-card-header{display:flex;justify-content:space-between;font-size:13px;color:#555}
+.v2-title{font-weight:600;margin:4px 0}
+.v2-url{font-size:12px;color:#2a6fb0;word-break:break-all}
+.v2-table{width:100%;border-collapse:collapse;font-size:13px;margin-top:6px}
+.v2-table th{text-align:left;color:#666;padding:3px 6px 3px 0;white-space:nowrap;vertical-align:top}
+.v2-table td{padding:3px 0}
+.v2-empty{color:#999}
+.v2-errors{color:#c0392b;font-size:12px;margin-top:6px}
+.v2-warnings{color:#b8860b;font-size:12px;margin-top:4px}
+
+@media (max-width:640px){
+  .parser-v2-cards{grid-template-columns:1fr}
+}

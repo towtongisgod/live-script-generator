@@ -1003,5 +1003,19 @@ if (parsed.promotions.length === 13) {
     dupResult.warnings.some(w => w.code === 'DUPLICATE_LINK_IN_PROMOTION'));
 }
 
+console.log('\n=== Promotion Parser V2 — Preview UI wiring ===');
+check('index.html loads parser-v2.js', indexHtml.includes('parser-v2.js'));
+check('build-site.js manifest registers parser-v2.js (static build stays complete)',
+  readText('build-site.js').includes("'/parser-v2.js'"));
+check('UI has a Preview Multi-Brand Parse (Beta) button', appJs.includes('parserV2PreviewBtn') && indexHtml.includes('Preview Multi-Brand Parse'));
+check('Preview button is wired to parsePromotionTextV2 and a dedicated render function',
+  appJs.includes("parsePromotionTextV2(raw") && appJs.includes('function renderParserV2Preview'));
+check('Preview handles Parser V2 not being loaded instead of crashing', appJs.includes("typeof parsePromotionTextV2 !== 'function'"));
+check('Preview is explicitly documented as NOT wired to Generate (still Confirmed-Parse-only per spec)',
+  indexHtml.includes('ยังไม่เชื่อมกับปุ่ม Generate') && appJs.includes('This is deliberately NOT wired to'));
+check('Preview panel renders per-promotion price breakdown (normal/promo/live/exchange/final), not just a single price',
+  appJs.includes('normalPrice') && appJs.includes('promotionPrice') && appJs.includes('livePrice') && appJs.includes('exchangePrice') && appJs.includes('finalPrice'));
+check('Preview panel surfaces both Critical errors and Warnings distinctly', appJs.includes('v2-errors') && appJs.includes('v2-warnings'));
+
 console.log(`\n${passed} passed, ${failed} failed`);
 if (failed > 0) process.exitCode = 1;

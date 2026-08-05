@@ -57,6 +57,80 @@ document.getElementById('copyAll').addEventListener('click', async () => {
   setStatus('Copy successful: คัดลอก Main Spoken Script ทั้งหมดแล้ว');
 });
 
+// ---------------------------------------------------------------------------
+// Promotion Parser V2 — read-only Preview. This is deliberately NOT wired to
+// Generate: Script Generation must only ever run on a Confirmed Structured
+// Promotion Data object (per spec), and this build does not yet have the
+// Editable Parse Preview / confirm step that would make a promotion
+// "Confirmed". Until that exists, V2 output is for review only — it shows
+// how the multi-brand/multi-campaign paste WOULD be segmented, so you can
+// compare it against what "Generate" (still on the original parser) does.
+// ---------------------------------------------------------------------------
+document.getElementById('parserV2PreviewBtn').addEventListener('click', () => {
+  const previewSection = document.getElementById('parserV2Preview');
+  const raw = input.value.trim();
+  if (!raw) {
+    previewSection.hidden = true;
+    return setStatus('Warning: ยังไม่มีข้อความให้ Preview');
+  }
+  if (typeof parsePromotionTextV2 !== 'function') {
+    previewSection.hidden = true;
+    return setStatus('Warning: Parser V2 ยังไม่โหลด (parser-v2.js)');
+  }
+
+  let result;
+  try {
+    result = parsePromotionTextV2(raw, {});
+  } catch (err) {
+    previewSection.hidden = true;
+    return setStatus(`Warning: Parser V2 preview ผิดพลาด (${err.message})`);
+  }
+
+  renderParserV2Preview(result, previewSection);
+  previewSection.hidden = false;
+  setStatus(`Preview: Parser V2 ตรวจพบ ${result.promotions.length} โปรโมชั่น (ดูผลด้านล่าง ยังไม่ใช่ Generate จริง)`);
+});
+
+function renderParserV2Preview(result, section){
+  const fmtPrice = v => (v == null ? '—' : `${v.toLocaleString('th-TH')} บาท`);
+  const fmtItems = items => (items || []).map(it =>
+    `${escapeHtml(it.brand ? it.brand.toUpperCase() : '?')}: ${escapeHtml(it.productName)}${it.quantity ? ` x${it.quantity}${it.unit ? escapeHtml(it.unit) : ''}` : ''}${it.mixable ? ' (คละได้)' : ''}`
+  ).join('<br>') || '<span class="v2-empty">— ไม่พบ —</span>';
+  const fmtGifts = gifts => (gifts || []).map(g =>
+    `${escapeHtml(g.brand ? g.brand.toUpperCase() : '?')}: ${escapeHtml(g.productName)}${g.quantity ? ` x${g.quantity}${g.unit ? escapeHtml(g.unit) : ''}` : ''}${g.value ? ` (มูลค่า ${g.value})` : ''}`
+  ).join('<br>') || '<span class="v2-empty">— ไม่มี —</span>';
+
+  section.innerHTML = `
+    <h2>Promotion Parser V2 — Preview (Beta, ยังไม่เชื่อมกับ Generate)</h2>
+    <p class="review-warning">พบ ${result.promotions.length} โปรโมชั่น จาก ${result.campaigns.length} แคมเปญ — รายการนี้เป็นการแสดงผลเท่านั้น (Read-only), แก้ไขไม่ได้ในเวอร์ชันนี้</p>
+    <div class="parser-v2-cards">
+      ${result.promotions.map((p, i) => `
+        <div class="parser-v2-card${p.errors.length ? ' has-error' : ''}">
+          <div class="parser-v2-card-header">
+            <strong>#${i + 1} [${escapeHtml(p.brand || 'UNKNOWN')}]</strong>
+            <span>${escapeHtml(p.platform || '')}</span>
+          </div>
+          <p class="v2-title">${escapeHtml(p.title || p.promotionGroupTitle || '(ไม่มีชื่อ)')}</p>
+          ${p.url ? `<p class="v2-url">${escapeHtml(p.url)}</p>` : ''}
+          <table class="v2-table">
+            <tr><th>สินค้าหลัก</th><td>${fmtItems(p.items)}</td></tr>
+            <tr><th>ของแถม / Bundle</th><td>${fmtGifts(p.gifts)}</td></tr>
+            <tr><th>กลไก</th><td>${escapeHtml(p.mechanic.type)}</td></tr>
+            <tr><th>ราคาปกติ</th><td>${fmtPrice(p.pricing.normalPrice)}</td></tr>
+            <tr><th>ราคาโปร</th><td>${fmtPrice(p.pricing.promotionPrice)}</td></tr>
+            <tr><th>ราคาไลฟ์</th><td>${fmtPrice(p.pricing.livePrice)}</td></tr>
+            <tr><th>ราคาแลกซื้อ</th><td>${fmtPrice(p.pricing.exchangePrice)}</td></tr>
+            <tr><th>ราคาสุดท้าย</th><td><strong>${fmtPrice(p.pricing.finalPrice)}</strong></td></tr>
+            ${p.dateRange ? `<tr><th>วันที่</th><td>${escapeHtml(p.dateRange.originalText)}${p.dateRange.confidence < 1 ? ' <em>(อนุมานจาก Marker ย้อนหลัง)</em>' : ''}</td></tr>` : ''}
+          </table>
+          ${p.errors.length ? `<p class="v2-errors">Critical: ${p.errors.map(e => escapeHtml(e.message)).join(', ')}</p>` : ''}
+          ${p.warnings.length ? `<p class="v2-warnings">Warning: ${p.warnings.map(w => escapeHtml(w.message)).join(', ')}</p>` : ''}
+        </div>
+      `).join('')}
+    </div>
+  `;
+}
+
 accountSelect.addEventListener('change', async () => {
   state.activeBrandId = accountSelect.value;
   state.currentPromos = [];

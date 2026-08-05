@@ -19,6 +19,7 @@ const sources = [
   ['/config/google-integration.js', path.join('config', 'google-integration.js'), 'text/javascript; charset=utf-8'],
   ['/config/google-apps-script-config.js', path.join('config', 'google-apps-script-config.js'), 'text/javascript; charset=utf-8'],
   ['/core.js', 'core.js', 'text/javascript; charset=utf-8'],
+  ['/parser-v2.js', 'parser-v2.js', 'text/javascript; charset=utf-8'],
   [appAssetPath, 'app.js', 'text/javascript; charset=utf-8'],
   ['/app.js', 'app.js', 'text/javascript; charset=utf-8'],
   ['/sample-promotions.txt', 'sample-promotions.txt', 'text/plain; charset=utf-8'],
